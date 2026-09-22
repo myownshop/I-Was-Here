@@ -1,12 +1,13 @@
 import { useState } from 'react';
-import { Shield, Building2, User, Mail, Lock, Palette, ArrowRight, Sparkles, CheckCircle2 } from 'lucide-react';
+import { Shield, Building2, User, Mail, Lock, Palette, ArrowRight, ArrowLeft, Sparkles, CheckCircle2, Eye, EyeOff } from 'lucide-react';
 import { signUpAdmin, signInAdmin, signInWithGoogle } from '../../services/firebase';
 import { Organization, UserProfile } from '../../types/attendance';
 import { useToast } from '../common/Toast';
 
 interface AuthPageProps {
-  onAuthSuccess: (org: Organization, profile?: UserProfile) => void;
+  onAuthSuccess: (org: Organization, profile?: UserProfile, isNewSignUp?: boolean) => void;
   onNavigateToAttend?: () => void;
+  onNavigateToHome?: () => void;
 }
 
 const PRESET_COLORS = [
@@ -18,7 +19,7 @@ const PRESET_COLORS = [
   { name: 'Cyan Glow', hex: '#06B6D4' },
 ];
 
-export function AuthPage({ onAuthSuccess, onNavigateToAttend }: AuthPageProps) {
+export function AuthPage({ onAuthSuccess, onNavigateToAttend, onNavigateToHome }: AuthPageProps) {
   const [tab, setTab] = useState<'signin' | 'signup'>('signup');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -27,8 +28,14 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend }: AuthPageProps) {
   const [adminName, setAdminName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [orgName, setOrgName] = useState('');
   const [accentColor, setAccentColor] = useState('#00FF66');
+
+  // Password visibility states
+  const [showSignUpPassword, setShowSignUpPassword] = useState(false);
+  const [showSignUpConfirmPassword, setShowSignUpConfirmPassword] = useState(false);
+  const [showSignInPassword, setShowSignInPassword] = useState(false);
 
   const { showToast } = useToast();
 
@@ -46,13 +53,22 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend }: AuthPageProps) {
       return;
     }
 
+    if (password !== confirmPassword) {
+      setError('Passwords do not match. Please re-enter your password identically in both fields.');
+      return;
+    }
+
     try {
       setLoading(true);
       const res = await signUpAdmin(adminName, email, password, orgName, accentColor);
       showToast('success', `Welcome! Organization "${res.org.name}" has been registered.`);
-      onAuthSuccess(res.org, res.profile);
+      onAuthSuccess(res.org, res.profile, true);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Registration failed.';
+      const originalMsg = err instanceof Error ? err.message : 'Registration failed.';
+      let msg = originalMsg;
+      if (originalMsg.includes('auth/operation-not-allowed')) {
+        msg = 'Email/Password sign-in is not enabled in Firebase Console. Please enable "Email/Password" under Firebase Console -> Authentication -> Sign-in method, or sign in using Google.';
+      }
       setError(msg);
       showToast('error', msg, 'Sign Up Failed');
     } finally {
@@ -74,12 +90,16 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend }: AuthPageProps) {
       const res = await signInAdmin(email, password);
       if (res.org) {
         showToast('success', `Signed in as admin for ${res.org.name}`);
-        onAuthSuccess(res.org);
+        onAuthSuccess(res.org, undefined, false);
       } else {
         setError('No organization linked to this account.');
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Authentication failed.';
+      const originalMsg = err instanceof Error ? err.message : 'Authentication failed.';
+      let msg = originalMsg;
+      if (originalMsg.includes('auth/operation-not-allowed')) {
+        msg = 'Email/Password sign-in is not enabled in Firebase Console. Please enable "Email/Password" under Firebase Console -> Authentication -> Sign-in method, or sign in using Google.';
+      }
       setError(msg);
       showToast('error', msg, 'Sign In Failed');
     } finally {
@@ -94,7 +114,8 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend }: AuthPageProps) {
       const res = await signInWithGoogle();
       if (res.org) {
         showToast('success', `Authenticated as ${res.org.adminName}`);
-        onAuthSuccess(res.org);
+        const isNew = !res.org.stateLga && !res.org.cdsBatch;
+        onAuthSuccess(res.org, undefined, isNew);
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Google authentication failed.';
@@ -105,23 +126,19 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend }: AuthPageProps) {
     }
   };
 
-  // 1-Click Instant Demo Login for reviewers
-  const handleQuickDemoAdmin = () => {
-    const demoOrg: Organization = {
-      id: 'org_nysc_ikeja',
-      name: 'Medical CDS, Ikeja',
-      adminUid: 'admin_demo_ikeja',
-      adminEmail: 'ikeja.cds@nysc.gov.ng',
-      adminName: 'Dr. Kelechi Nwosu (CDS President)',
-      accentColor: '#00FF66',
-      createdAt: new Date().toISOString(),
-    };
-    showToast('success', 'Logged in as Demo Admin (Medical CDS, Ikeja)');
-    onAuthSuccess(demoOrg);
-  };
-
   return (
     <div className="max-w-xl mx-auto w-full px-4 py-6">
+      {onNavigateToHome && (
+        <button
+          type="button"
+          onClick={onNavigateToHome}
+          className="inline-flex items-center space-x-1.5 text-xs text-slate-400 hover:text-white transition-colors mb-4 cursor-pointer py-1 px-2 rounded-lg hover:bg-[#141b26]"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" />
+          <span>Back to Overview</span>
+        </button>
+      )}
+
       {/* Brand Header */}
       <div className="text-center mb-6">
         <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-[#00FF66]/10 border border-[#00FF66]/30 mb-3 shadow-[0_0_20px_rgba(0,255,102,0.2)]">
@@ -189,7 +206,7 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend }: AuthPageProps) {
           <form onSubmit={handleSignUp} className="space-y-4">
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
-                Admin Full Name
+                Coordinator Full Name
               </label>
               <div className="relative">
                 <User className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
@@ -197,7 +214,7 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend }: AuthPageProps) {
                   id="input-admin-name"
                   type="text"
                   required
-                  placeholder="e.g. Dr. Kelechi Nwosu"
+                  placeholder="Full Name"
                   value={adminName}
                   onChange={(e) => setAdminName(e.target.value)}
                   className="w-full pl-9 pr-3 py-2.5 bg-[#0a0c12] border border-[#1f283a] rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#00FF66]"
@@ -215,7 +232,7 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend }: AuthPageProps) {
                   id="input-org-name"
                   type="text"
                   required
-                  placeholder="e.g. Medical CDS, Ikeja"
+                  placeholder="Organization Name"
                   value={orgName}
                   onChange={(e) => setOrgName(e.target.value)}
                   className="w-full pl-9 pr-3 py-2.5 bg-[#0a0c12] border border-[#1f283a] rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#00FF66]"
@@ -226,41 +243,80 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend }: AuthPageProps) {
               </p>
             </div>
 
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
+                Email Address
+              </label>
+              <div className="relative">
+                <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                <input
+                  id="input-email"
+                  type="email"
+                  required
+                  placeholder="coordinator@organization.org"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2.5 bg-[#0a0c12] border border-[#1f283a] rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#00FF66]"
+                />
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
-                  Email Address
+                  Create Password
                 </label>
                 <div className="relative">
-                  <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
-                  <input
-                    id="input-email"
-                    type="email"
-                    required
-                    placeholder="admin@organization.org"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full pl-9 pr-3 py-2.5 bg-[#0a0c12] border border-[#1f283a] rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#00FF66]"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
-                  Password
-                </label>
-                <div className="relative">
-                  <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                  <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-3 pointer-events-none" />
                   <input
                     id="input-password"
-                    type="password"
+                    type={showSignUpPassword ? 'text' : 'password'}
                     required
                     minLength={6}
                     placeholder="Min 6 characters"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full pl-9 pr-3 py-2.5 bg-[#0a0c12] border border-[#1f283a] rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#00FF66]"
+                    className="w-full pl-9 pr-10 py-2.5 bg-[#0a0c12] border border-[#1f283a] rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#00FF66]"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowSignUpPassword(!showSignUpPassword)}
+                    className="absolute right-2.5 top-2.5 text-slate-500 hover:text-slate-300 transition-colors cursor-pointer p-0.5 rounded"
+                    title={showSignUpPassword ? 'Hide password' : 'View password'}
+                  >
+                    {showSignUpPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
+                  Confirm Password
+                </label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-3 pointer-events-none" />
+                  <input
+                    id="input-confirm-password"
+                    type={showSignUpConfirmPassword ? 'text' : 'password'}
+                    required
+                    minLength={6}
+                    placeholder="Re-type password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    className={`w-full pl-9 pr-10 py-2.5 bg-[#0a0c12] border rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none ${
+                      confirmPassword && password !== confirmPassword
+                        ? 'border-rose-500/80 focus:border-rose-500'
+                        : 'border-[#1f283a] focus:border-[#00FF66]'
+                    }`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowSignUpConfirmPassword(!showSignUpConfirmPassword)}
+                    className="absolute right-2.5 top-2.5 text-slate-500 hover:text-slate-300 transition-colors cursor-pointer p-0.5 rounded"
+                    title={showSignUpConfirmPassword ? 'Hide password' : 'View password'}
+                  >
+                    {showSignUpConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
               </div>
             </div>
@@ -344,7 +400,7 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend }: AuthPageProps) {
                   id="input-signin-email"
                   type="email"
                   required
-                  placeholder="admin@cds.org"
+                  placeholder="coordinator@organization.org"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full pl-9 pr-3 py-2.5 bg-[#0a0c12] border border-[#1f283a] rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#00FF66]"
@@ -357,16 +413,24 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend }: AuthPageProps) {
                 Password
               </label>
               <div className="relative">
-                <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-3 pointer-events-none" />
                 <input
                   id="input-signin-password"
-                  type="password"
+                  type={showSignInPassword ? 'text' : 'password'}
                   required
-                  placeholder="••••••••"
+                  placeholder="Password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2.5 bg-[#0a0c12] border border-[#1f283a] rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#00FF66]"
+                  className="w-full pl-9 pr-10 py-2.5 bg-[#0a0c12] border border-[#1f283a] rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#00FF66]"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowSignInPassword(!showSignInPassword)}
+                  className="absolute right-2.5 top-2.5 text-slate-500 hover:text-slate-300 transition-colors cursor-pointer p-0.5 rounded"
+                  title={showSignInPassword ? 'Hide password' : 'View password'}
+                >
+                  {showSignInPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
             </div>
 
@@ -376,7 +440,7 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend }: AuthPageProps) {
               disabled={loading}
               className="w-full py-3 rounded-xl font-bold text-xs sm:text-sm bg-[#00FF66] text-[#0a0c10] flex items-center justify-center gap-2 shadow-lg transition-all active:scale-95 disabled:opacity-50"
             >
-              {loading ? <span>Signing In...</span> : <span>Sign In to Admin Portal</span>}
+              {loading ? <span>Signing In...</span> : <span>Sign In to Dashboard</span>}
             </button>
 
             <div className="relative flex items-center justify-center my-3">
@@ -415,22 +479,6 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend }: AuthPageProps) {
             </button>
           </form>
         )}
-
-        {/* 1-Click Instant Demo Evaluation Button */}
-        <div className="mt-6 pt-4 border-t border-[#1e2638] flex flex-col items-center">
-          <button
-            id="btn-instant-demo-admin"
-            type="button"
-            onClick={handleQuickDemoAdmin}
-            className="w-full py-2.5 rounded-xl text-xs font-semibold text-[#00FF66] bg-[#00FF66]/10 hover:bg-[#00FF66]/15 border border-[#00FF66]/30 flex items-center justify-center gap-1.5 transition-all"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-[#00FF66]" />
-            <span>1-Click Test: Launch Pre-Configured "Medical CDS"</span>
-          </button>
-          <p className="text-[10px] text-slate-500 mt-1">
-            Test full tenant-isolated admin controls immediately without creating an account
-          </p>
-        </div>
       </div>
 
       {/* Back to attendee flow link */}

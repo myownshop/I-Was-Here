@@ -15,6 +15,7 @@ import {
   doc,
   getDoc,
   setDoc,
+  deleteDoc,
   getDocs,
   collection,
   query,
@@ -166,6 +167,49 @@ export async function getOrganization(orgId: string): Promise<Organization | nul
 
   const cached = getLocalCache<Organization>(LOCAL_ORGS_KEY, []);
   return cached.find((o) => o.id === orgId) || null;
+}
+
+export async function updateOrganization(
+  orgId: string,
+  updates: Partial<Organization>
+): Promise<Organization> {
+  const current = (await getOrganization(orgId)) || {
+    id: orgId,
+    name: 'Organization',
+    adminUid: auth.currentUser?.uid || '',
+    adminEmail: auth.currentUser?.email || '',
+    adminName: auth.currentUser?.displayName || 'Coordinator',
+    accentColor: '#00FF66',
+    createdAt: new Date().toISOString(),
+  };
+
+  const updatedOrg: Organization = {
+    ...current,
+    ...updates,
+    updatedAt: new Date().toISOString(),
+  };
+
+  // Strip undefined values to prevent Firestore undefined serialization error
+  const cleanPayload: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(updatedOrg)) {
+    if (v !== undefined) {
+      cleanPayload[k] = v;
+    }
+  }
+
+  try {
+    await setDoc(doc(db, 'organizations', orgId), cleanPayload, { merge: true });
+  } catch (err) {
+    console.warn('Firestore update organization fallback to local cache:', err);
+  }
+
+  const cachedOrgs = getLocalCache<Organization>(LOCAL_ORGS_KEY, []);
+  setLocalCache(LOCAL_ORGS_KEY, [
+    updatedOrg,
+    ...cachedOrgs.filter((o) => o.id !== orgId),
+  ]);
+
+  return updatedOrg;
 }
 
 export async function getUserProfile(uid: string): Promise<UserProfile | null> {
@@ -402,18 +446,13 @@ export async function resolveShortCode(rawCode: string): Promise<Campaign | null
 }
 
 export async function getCampaignsForOrg(orgId: string): Promise<Campaign[]> {
-  const campaignsMap = new Map<string, Campaign>();
-
-  // Add cached campaigns matching org
-  const cached = getLocalCache<Campaign>(LOCAL_CAMPAIGNS_KEY, []);
-  cached.filter((c) => !c.orgId || c.orgId === orgId).forEach((c) => campaignsMap.set(c.id, c));
-
   try {
     const q = query(collection(db, 'campaigns'), where('orgId', '==', orgId));
     const snapshot = await getDocs(q);
+    const firestoreCampaigns: Campaign[] = [];
     snapshot.forEach((docSnap) => {
       const data = docSnap.data();
-      campaignsMap.set(docSnap.id, {
+      firestoreCampaigns.push({
         id: docSnap.id,
         orgId: data.orgId || orgId,
         name: data.name,
@@ -425,25 +464,26 @@ export async function getCampaignsForOrg(orgId: string): Promise<Campaign[]> {
         createdAt: data.createdAt,
       });
     });
-  } catch (error) {
-    console.warn('Could not fetch org campaigns from Firestore:', error);
-  }
 
-  return Array.from(campaignsMap.values()).sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  );
+    const sorted = firestoreCampaigns.sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+    setLocalCache(LOCAL_CAMPAIGNS_KEY, sorted);
+    return sorted;
+  } catch (error) {
+    console.warn('Could not fetch org campaigns from Firestore, fallback to local cache:', error);
+    const cached = getLocalCache<Campaign>(LOCAL_CAMPAIGNS_KEY, []);
+    return cached.filter((c) => !c.orgId || c.orgId === orgId);
+  }
 }
 
 export async function getAllCampaigns(): Promise<Campaign[]> {
-  const campaignsMap = new Map<string, Campaign>();
-  const cached = getLocalCache<Campaign>(LOCAL_CAMPAIGNS_KEY, []);
-  cached.forEach((c) => campaignsMap.set(c.id, c));
-
   try {
     const snapshot = await getDocs(collection(db, 'campaigns'));
+    const list: Campaign[] = [];
     snapshot.forEach((docSnap) => {
       const data = docSnap.data();
-      campaignsMap.set(docSnap.id, {
+      list.push({
         id: docSnap.id,
         orgId: data.orgId || '',
         name: data.name,
@@ -455,13 +495,56 @@ export async function getAllCampaigns(): Promise<Campaign[]> {
         createdAt: data.createdAt,
       });
     });
+
+    const sorted = list.sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+    setLocalCache(LOCAL_CAMPAIGNS_KEY, sorted);
+    return sorted;
   } catch (error) {
     console.warn('Could not fetch campaigns from Firestore:', error);
+    return getLocalCache<Campaign>(LOCAL_CAMPAIGNS_KEY, []);
+  }
+}
+
+/**
+ * Clears all campaigns, attendees, and short codes for an organization in Firestore
+ */
+export async function clearOrganizationCampaignsAndAttendees(orgId: string): Promise<{ deletedCampaigns: number }> {
+  let count = 0;
+  try {
+    const q = query(collection(db, 'campaigns'), where('orgId', '==', orgId));
+    const snap = await getDocs(q);
+    for (const cDoc of snap.docs) {
+      const campId = cDoc.id;
+      const data = cDoc.data();
+      try {
+        const attSnap = await getDocs(collection(db, 'campaigns', campId, 'attendees'));
+        for (const aDoc of attSnap.docs) {
+          await deleteDoc(doc(db, 'campaigns', campId, 'attendees', aDoc.id));
+        }
+      } catch (e) {
+        console.warn('Error clearing attendees for campaign:', campId, e);
+      }
+      if (data.shortCode) {
+        try {
+          await deleteDoc(doc(db, 'short_links', data.shortCode.toLowerCase()));
+        } catch {
+          // ignore
+        }
+      }
+      await deleteDoc(doc(db, 'campaigns', campId));
+      count++;
+    }
+  } catch (err) {
+    console.warn('Error clearing organization campaigns from Firestore:', err);
   }
 
-  return Array.from(campaignsMap.values()).sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  );
+  setLocalCache(LOCAL_CAMPAIGNS_KEY, []);
+  setLocalCache(LOCAL_SHORTLINKS_KEY, []);
+  setLocalCache(LOCAL_ATTENDEES_KEY, []);
+
+  return { deletedCampaigns: count };
 }
 
 // ==========================================
@@ -694,48 +777,14 @@ export async function importOfflineIwhRecord(
 // ==========================================
 
 export async function initializeDefaultOrgAndCampaign(): Promise<{
-  org: Organization;
-  campaign: Campaign;
+  org: Organization | null;
+  campaign: Campaign | null;
 }> {
   const existingCampaigns = await getAllCampaigns();
   const existingOrgs = getLocalCache<Organization>(LOCAL_ORGS_KEY, []);
 
-  let defaultOrg: Organization;
-  if (existingOrgs.length > 0) {
-    defaultOrg = existingOrgs[0];
-  } else {
-    defaultOrg = {
-      id: 'org_nysc_ikeja',
-      name: 'Medical CDS, Ikeja',
-      adminUid: 'admin_demo_ikeja',
-      adminEmail: 'ikeja.cds@nysc.gov.ng',
-      adminName: 'Dr. Kelechi Nwosu (CDS President)',
-      accentColor: '#00FF66',
-      createdAt: new Date().toISOString(),
-    };
-    try {
-      await setDoc(doc(db, 'organizations', defaultOrg.id), defaultOrg);
-    } catch {
-      // offline fallback
-    }
-    setLocalCache(LOCAL_ORGS_KEY, [defaultOrg]);
-  }
-
-  let defaultCampaign: Campaign;
-  if (existingCampaigns.length > 0) {
-    defaultCampaign = existingCampaigns[0];
-  } else {
-    const today = new Date().toISOString().split('T')[0];
-    defaultCampaign = await createCampaign({
-      orgId: defaultOrg.id,
-      name: 'Ikeja General Hospital CDS Field Outreach',
-      date: today,
-      targetLatitude: 6.5954,
-      targetLongitude: 3.3421,
-      allowedRadius: 100,
-      shortCode: 'med24',
-    });
-  }
-
-  return { org: defaultOrg, campaign: defaultCampaign };
+  return {
+    org: existingOrgs[0] || null,
+    campaign: existingCampaigns[0] || null,
+  };
 }

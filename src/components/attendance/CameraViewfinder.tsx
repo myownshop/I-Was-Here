@@ -8,12 +8,10 @@ import {
   SwitchCamera,
   Upload,
   Image as ImageIcon,
-  UserCheck,
 } from 'lucide-react';
 import {
   detectFaceInVideoFrame,
   detectFaceInImageSource,
-  generateSampleCorpsMemberPortrait,
   FaceDetectionResult,
 } from '../../services/faceDetector';
 import { compressFacialImage, CompressionResult } from '../../utils/imageCompression';
@@ -295,14 +293,6 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
     }
   };
 
-  // Demo Sample Portrait Handler
-  const handleUseSamplePortrait = () => {
-    const sampleDataUrl = generateSampleCorpsMemberPortrait();
-    if (sampleDataUrl) {
-      processImageDataUrl(sampleDataUrl);
-    }
-  };
-
   const handleRetake = () => {
     setCapturedPreview(null);
     setDetection({
@@ -372,12 +362,12 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
               }`}
             >
               <Upload className="w-3.5 h-3.5" />
-              <span>Upload Photo / Demo</span>
+              <span>Upload Photo</span>
             </button>
           </div>
 
           <span className="text-[10px] text-slate-400 font-medium px-2 py-0.5 rounded bg-[#161d2b] border border-[#212a3d]">
-            {inputMode === 'camera' ? 'Liveness Active' : 'Offline / Test Safe'}
+            {inputMode === 'camera' ? 'Liveness Active' : 'Photo Verification'}
           </span>
         </div>
       )}
@@ -413,7 +403,7 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
           </button>
         </div>
       ) : inputMode === 'upload' ? (
-        /* Drag & Drop / File Selection / Demo Photo View */
+        /* Drag & Drop / File Selection Photo View */
         <div id="camera-upload-zone" className="p-5 flex flex-col items-center">
           <div
             onDrop={handleDrop}
@@ -446,21 +436,6 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
               className="px-4 py-1.5 rounded-lg bg-[#1a2333] hover:bg-[#242f44] text-[#00FF66] text-xs font-semibold border border-[#2c3a52] transition-colors"
             >
               Browse Photo
-            </button>
-          </div>
-
-          {/* Quick Demo Option */}
-          <div className="w-full max-w-sm mt-4 pt-3 border-t border-[#1a2233] flex flex-col items-center">
-            <span className="text-[11px] text-slate-400 mb-2">Testing or evaluating without a webcam?</span>
-            <button
-              id="btn-use-sample-portrait"
-              type="button"
-              onClick={handleUseSamplePortrait}
-              disabled={isProcessingFile}
-              className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-[#141c2b] to-[#192437] hover:from-[#1b263b] hover:to-[#22314a] text-slate-200 border border-[#293750] text-xs font-semibold flex items-center justify-center space-x-2 transition-all shadow-sm"
-            >
-              <UserCheck className="w-4 h-4 text-[#00FF66]" />
-              <span>Use Verified NYSC Sample Face (1-Click Test)</span>
             </button>
           </div>
 
@@ -507,7 +482,7 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
               className="w-full flex items-center justify-center space-x-2 px-4 py-2.5 rounded-xl bg-[#00FF66] text-[#0a0c10] text-xs font-bold shadow-[0_0_15px_rgba(0,255,102,0.3)] hover:bg-[#00e55b] transition-all"
             >
               <Upload className="w-4 h-4" />
-              <span>Use Photo Upload / Demo</span>
+              <span>Use Photo Upload</span>
             </button>
 
             <button

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { X, Navigation, MapPin, Calendar, Sparkles, Loader2, PlusCircle } from 'lucide-react';
-import { Campaign } from '../../types/attendance';
+import { Campaign, Organization } from '../../types/attendance';
 import { FloatingInput } from '../common/FloatingInput';
 import { generateShortCode } from '../../utils/nysc';
 import { getCurrentCoordinates } from '../../utils/geo';
@@ -12,6 +12,7 @@ interface CreateCampaignModalProps {
   orgId: string;
   onClose: () => void;
   onCampaignCreated: (campaign: Campaign) => void;
+  organization?: Organization | null;
 }
 
 // Preset venues in Nigeria for quick coordinator setup
@@ -27,14 +28,23 @@ export function CreateCampaignModal({
   orgId,
   onClose,
   onCampaignCreated,
+  organization,
 }: CreateCampaignModalProps) {
   const today = new Date().toISOString().split('T')[0];
 
-  const [name, setName] = useState<string>('');
+  const defaultVenueTitle = organization?.name
+    ? `${organization.name} - ${organization.meetingSchedule || 'Weekly Meeting'}`
+    : '';
+
+  const [name, setName] = useState<string>(defaultVenueTitle);
   const [date, setDate] = useState<string>(today);
-  const [targetLat, setTargetLat] = useState<string>('6.5954');
-  const [targetLng, setTargetLng] = useState<string>('3.3421');
-  const [allowedRadius, setAllowedRadius] = useState<number>(100);
+  const [targetLat, setTargetLat] = useState<string>(
+    organization?.defaultLatitude !== undefined ? String(organization.defaultLatitude) : '6.5954'
+  );
+  const [targetLng, setTargetLng] = useState<string>(
+    organization?.defaultLongitude !== undefined ? String(organization.defaultLongitude) : '3.3421'
+  );
+  const [allowedRadius, setAllowedRadius] = useState<number>(organization?.defaultRadius || 100);
   const [shortCode, setShortCode] = useState<string>(generateShortCode());
 
   const [locating, setLocating] = useState<boolean>(false);

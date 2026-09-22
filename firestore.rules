@@ -18,7 +18,15 @@ service cloud.firestore {
       return data.name is string && data.name.size() >= 2 && data.name.size() <= 100
         && data.adminUid is string && data.adminUid.size() <= 128
         && data.adminEmail is string
-        && data.accentColor is string && data.accentColor.size() <= 10;
+        && data.accentColor is string && data.accentColor.size() <= 10
+        && (!('stateLga' in data) || (data.stateLga is string && data.stateLga.size() <= 120))
+        && (!('cdsBatch' in data) || (data.cdsBatch is string && data.cdsBatch.size() <= 60))
+        && (!('meetingSchedule' in data) || (data.meetingSchedule is string && data.meetingSchedule.size() <= 120))
+        && (!('defaultVenueName' in data) || (data.defaultVenueName is string && data.defaultVenueName.size() <= 120))
+        && (!('description' in data) || (data.description is string && data.description.size() <= 500))
+        && (!('defaultLatitude' in data) || data.defaultLatitude is number)
+        && (!('defaultLongitude' in data) || data.defaultLongitude is number)
+        && (!('defaultRadius' in data) || data.defaultRadius is number);
     }
 
     function isValidUserProfile(data) {
@@ -96,6 +104,7 @@ service cloud.firestore {
         allow get, list: if true;
         // Attendees submit their record or admin imports offline .iwh file
         allow create: if isValidId(attendeeId) && isValidAttendee(request.resource.data);
+        allow delete: if isSignedIn();
       }
     }
 
@@ -105,6 +114,7 @@ service cloud.firestore {
       allow list: if isSignedIn();
       allow create: if isValidId(shortCode) && isValidShortLink(request.resource.data);
       allow update: if isSignedIn() && isValidId(shortCode) && isValidShortLink(request.resource.data);
+      allow delete: if isSignedIn();
     }
 
     // Connection health check

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Header } from './components/common/Header';
+import { HomePage } from './components/home/HomePage';
 import { AttendanceForm } from './components/attendance/AttendanceForm';
 import { AdminPortal } from './components/admin/AdminPortal';
 import { AuthPage } from './components/auth/AuthPage';
@@ -12,11 +13,12 @@ import {
   getUserProfile,
   getOrganization,
   signOutAdmin,
-  initializeDefaultOrgAndCampaign,
 } from './services/firebase';
 
+export type AppView = 'home' | 'attend' | 'portal' | 'auth';
+
 export default function App() {
-  const [view, setView] = useState<'attend' | 'admin' | 'auth'>('attend');
+  const [view, setView] = useState<AppView>('home');
   const [activeCampaign, setActiveCampaign] = useState<Campaign | null>(null);
   const [targetShortCode, setTargetShortCode] = useState<string | undefined>(undefined);
   const [targetCampaignId, setTargetCampaignId] = useState<string | undefined>(undefined);
@@ -25,21 +27,53 @@ export default function App() {
   const [currentOrg, setCurrentOrg] = useState<Organization | null>(null);
   const [currentUserProfile, setCurrentUserProfile] = useState<UserProfile | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(true);
+  const [isFirstSetup, setIsFirstSetup] = useState<boolean>(false);
+  const [initialPortalTab, setInitialPortalTab] = useState<'sessions' | 'settings'>('sessions');
 
-  // Parse Route from URL path or hash
+  // Parse Route from URL hash, pathname, or search query parameters
   const parseRoute = useCallback(() => {
     const hash = window.location.hash.replace(/^#\/?/, '');
     const pathname = window.location.pathname.replace(/^\//, '');
-
     const routeStr = hash || pathname;
+
+    // Check query parameters (e.g. ?view=attend or ?c=med24 or ?code=med24)
+    if (typeof window !== 'undefined' && window.location.search) {
+      const searchParams = new URLSearchParams(window.location.search);
+      const searchCode = searchParams.get('c') || searchParams.get('code');
+      const searchCampaign = searchParams.get('campaign') || searchParams.get('attend');
+      const searchView = searchParams.get('view');
+
+      if (searchCode) {
+        setTargetShortCode(searchCode);
+        setView('attend');
+        return;
+      }
+      if (searchCampaign) {
+        setTargetCampaignId(searchCampaign);
+        setView('attend');
+        return;
+      }
+      if (searchView === 'attend') {
+        setView('attend');
+        return;
+      }
+      if (searchView === 'auth') {
+        setView('auth');
+        return;
+      }
+      if (searchView === 'portal' || searchView === 'admin' || searchView === 'cds') {
+        setView('portal');
+        return;
+      }
+    }
 
     if (routeStr.startsWith('auth') || routeStr.startsWith('login')) {
       setView('auth');
       return;
     }
 
-    if (routeStr.startsWith('admin')) {
-      setView('admin');
+    if (routeStr.startsWith('portal') || routeStr.startsWith('admin') || routeStr.startsWith('cds')) {
+      setView('portal');
       return;
     }
 
@@ -59,8 +93,14 @@ export default function App() {
       return;
     }
 
-    // Default view
-    setView('attend');
+    // Direct manual attend link: /attend
+    if (routeStr.startsWith('attend')) {
+      setView('attend');
+      return;
+    }
+
+    // Default view is the Home feature & capability overview
+    setView('home');
   }, []);
 
   useEffect(() => {
@@ -91,13 +131,8 @@ export default function App() {
           console.error('Error fetching auth user profile:', err);
         }
       } else {
-        // Fallback or seed default NYSC tenant if none logged in
-        try {
-          const bootstrapped = await initializeDefaultOrgAndCampaign();
-          setCurrentOrg((prev) => prev || bootstrapped.org);
-        } catch (e) {
-          console.error('Bootstrap error:', e);
-        }
+        setCurrentUserProfile(null);
+        setCurrentOrg(null);
       }
       setAuthLoading(false);
     });
@@ -109,18 +144,20 @@ export default function App() {
     };
   }, [parseRoute]);
 
-  const handleViewChange = (newView: 'attend' | 'admin' | 'auth') => {
+  const handleViewChange = (newView: AppView) => {
     setView(newView);
-    if (newView === 'admin') {
-      window.location.hash = '#/admin';
+    if (newView === 'portal') {
+      window.location.hash = '#/portal';
     } else if (newView === 'auth') {
       window.location.hash = '#/auth';
-    } else {
+    } else if (newView === 'attend') {
       if (activeCampaign?.shortCode) {
         window.location.hash = `#/c/${activeCampaign.shortCode}`;
       } else {
-        window.location.hash = '#/';
+        window.location.hash = '#/attend';
       }
+    } else {
+      window.location.hash = '#/';
     }
   };
 
@@ -132,21 +169,40 @@ export default function App() {
     window.location.hash = `#/c/${campaign.shortCode}`;
   };
 
+  const handleLaunchAttendeeFlowWithCode = (code?: string) => {
+    if (code) {
+      setTargetShortCode(code);
+      window.location.hash = `#/c/${code}`;
+    } else {
+      window.location.hash = '#/attend';
+    }
+    setView('attend');
+  };
+
   const handleSignOut = async () => {
     try {
       await signOutAdmin();
       setCurrentUserProfile(null);
       showToast('info', 'Signed out of organization portal.', 'Signed Out');
-      handleViewChange('auth');
+      handleViewChange('home');
     } catch {
       showToast('error', 'Error signing out.', 'Error');
     }
   };
 
-  const handleAuthSuccess = (org: Organization, profile?: UserProfile) => {
+  const handleAuthSuccess = (org: Organization, profile?: UserProfile, isNewSignUp?: boolean) => {
     setCurrentOrg(org);
     if (profile) setCurrentUserProfile(profile);
-    handleViewChange('admin');
+    // If newly signed up or profile details are not yet completed, redirect to settings page first
+    if (isNewSignUp || !org.stateLga || !org.cdsBatch) {
+      setIsFirstSetup(true);
+      setInitialPortalTab('settings');
+    } else {
+      setIsFirstSetup(false);
+      setInitialPortalTab('sessions');
+    }
+    // Navigate directly to the CDS / Body portal
+    handleViewChange('portal');
   };
 
   const accentColor = currentOrg?.accentColor || '#00FF66';
@@ -155,19 +211,20 @@ export default function App() {
     <div
       className="min-h-screen bg-[#0a0c10] text-[#f0f3f6] flex flex-col selection:bg-[#00FF66] selection:text-[#0a0c10]"
       style={{
-        // Dynamic custom accent highlight css variable if needed
         ['--org-accent' as string]: accentColor,
       }}
     >
       {/* Toast notification system */}
       <ToastContainer />
 
-      {/* Global Navigation Header */}
+      {/* Global Navigation Header with CDS / Body Branding */}
       <Header
         currentView={view}
         onViewChange={handleViewChange}
         activeCampaignName={activeCampaign?.name}
         organization={currentOrg}
+        currentUserProfile={currentUserProfile}
+        onSignOut={currentUserProfile ? handleSignOut : undefined}
       />
 
       {/* Offline Status Warning & Action Bar */}
@@ -175,27 +232,44 @@ export default function App() {
 
       {/* Main View Container */}
       <main className="flex-1 flex flex-col justify-start py-4 sm:py-6">
-        {view === 'attend' ? (
+        {view === 'home' ? (
+          <HomePage
+            organization={currentOrg}
+            currentUserProfile={currentUserProfile}
+            onNavigateToAuth={() => handleViewChange('auth')}
+            onNavigateToPortal={() => handleViewChange('portal')}
+            onNavigateToAttend={handleLaunchAttendeeFlowWithCode}
+            onSignOut={currentUserProfile ? handleSignOut : undefined}
+          />
+        ) : view === 'attend' ? (
           <AttendanceForm
             initialCampaignId={targetCampaignId}
             initialShortCode={targetShortCode}
             onCampaignLoaded={(camp) => setActiveCampaign(camp)}
+            onBackToHome={() => handleViewChange('home')}
           />
         ) : view === 'auth' ? (
-          <AuthPage onAuthSuccess={handleAuthSuccess} />
+          <AuthPage
+            onAuthSuccess={handleAuthSuccess}
+            onNavigateToAttend={() => handleViewChange('attend')}
+            onNavigateToHome={() => handleViewChange('home')}
+          />
         ) : (
           <AdminPortal
             currentOrg={currentOrg}
             onLaunchAttendeeFlow={handleLaunchAttendeeFlow}
             onSignOut={currentUserProfile ? handleSignOut : undefined}
             onNavigateToAuth={() => handleViewChange('auth')}
+            initialTab={initialPortalTab}
+            isFirstSetup={isFirstSetup}
+            onOrganizationUpdated={(updated) => setCurrentOrg(updated)}
           />
         )}
       </main>
 
       {/* Footer */}
-      <footer className="py-4 border-t border-[#161c26] text-center text-xs text-slate-400">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+      <footer className="py-5 border-t border-[#161c26] text-center text-xs text-slate-400">
+        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2.5">
           <p className="font-medium tracking-wide">
             {currentOrg?.name || 'IWasHere'} • Multi-Tenant Biometric Attendance PWA
           </p>

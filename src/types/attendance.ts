@@ -10,6 +10,15 @@ export interface Organization {
   adminName: string;
   accentColor: string; // e.g. #00FF66, #3B82F6, #EC4899, #F59E0B
   createdAt: string;
+  stateLga?: string; // e.g. Lagos State • Ikeja LGA
+  cdsBatch?: string; // e.g. 2024 Batch B
+  meetingSchedule?: string; // e.g. Thursdays at 9:00 AM
+  defaultVenueName?: string;
+  defaultLatitude?: number;
+  defaultLongitude?: number;
+  defaultRadius?: number;
+  description?: string;
+  updatedAt?: string;
 }
 
 export interface UserProfile {

@@ -32,9 +32,50 @@
           "description": "Custom primary hex accent color (e.g. #00FF66)",
           "pattern": "^#[0-9a-fA-F]{6}$"
         },
+        "stateLga": {
+          "type": "string",
+          "description": "State and LGA / Jurisdiction (e.g. Lagos State - Ikeja LGA)",
+          "maxLength": 120
+        },
+        "cdsBatch": {
+          "type": "string",
+          "description": "CDS Batch / Stream (e.g. 2024 Batch B)",
+          "maxLength": 60
+        },
+        "meetingSchedule": {
+          "type": "string",
+          "description": "Meeting day and schedule (e.g. Thursdays 9:00 AM)",
+          "maxLength": 120
+        },
+        "defaultVenueName": {
+          "type": "string",
+          "description": "Default venue name",
+          "maxLength": 120
+        },
+        "defaultLatitude": {
+          "type": "number",
+          "description": "Default venue latitude"
+        },
+        "defaultLongitude": {
+          "type": "number",
+          "description": "Default venue longitude"
+        },
+        "defaultRadius": {
+          "type": "number",
+          "description": "Default allowed radius in meters"
+        },
+        "description": {
+          "type": "string",
+          "description": "Organization purpose and details",
+          "maxLength": 500
+        },
         "createdAt": {
           "type": "string",
           "description": "Creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Update timestamp"
         }
       },
       "required": ["id", "name", "adminUid", "adminEmail", "accentColor"]

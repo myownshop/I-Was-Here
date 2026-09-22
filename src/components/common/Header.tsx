@@ -1,22 +1,24 @@
-import { ShieldCheck, Wifi, WifiOff, Users, QrCode, Building2, KeyRound } from 'lucide-react';
-import { Organization } from '../../types/attendance';
+import { ShieldCheck, LogOut } from 'lucide-react';
+import { Organization, UserProfile } from '../../types/attendance';
 import { PWAInstallButton } from './PWAInstallButton';
-import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 
 interface HeaderProps {
-  currentView: 'attend' | 'admin' | 'auth';
-  onViewChange: (view: 'attend' | 'admin' | 'auth') => void;
+  currentView: 'home' | 'attend' | 'portal' | 'auth';
+  onViewChange: (view: 'home' | 'attend' | 'portal' | 'auth') => void;
   activeCampaignName?: string;
   organization?: Organization | null;
+  currentUserProfile?: UserProfile | null;
+  onSignOut?: () => void;
 }
 
 export function Header({
-  currentView,
+  currentView: _currentView,
   onViewChange,
   activeCampaignName,
   organization,
+  currentUserProfile,
+  onSignOut,
 }: HeaderProps) {
-  const isOnline = useOnlineStatus();
   const accentColor = organization?.accentColor || '#00FF66';
 
   return (
@@ -25,14 +27,16 @@ export function Header({
       className="sticky top-0 z-40 bg-[#0a0c10]/95 backdrop-blur-md border-b border-[#1f2633] px-3 sm:px-4 py-2.5"
     >
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
-        {/* Brand identity */}
+        {/* Brand identity - Click goes to Home overview */}
         <div
-          className="flex items-center space-x-3 cursor-pointer"
-          onClick={() => onViewChange('attend')}
+          id="brand-logo-btn"
+          className="flex items-center space-x-3 cursor-pointer group"
+          onClick={() => onViewChange('home')}
+          title="Return to Home Overview"
         >
           <div
             id="brand-logo-badge"
-            className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl border flex items-center justify-center transition-all shadow-md shrink-0"
+            className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl border flex items-center justify-center transition-all shadow-md shrink-0 group-hover:scale-105"
             style={{
               backgroundColor: `${accentColor}15`,
               borderColor: `${accentColor}40`,
@@ -55,8 +59,8 @@ export function Header({
                 PWA
               </span>
             </div>
-            <p className="text-[11px] text-slate-400 font-medium truncate max-w-[150px] sm:max-w-xs">
-              {organization?.name || activeCampaignName || 'Multi-Tenant Biometric Attendance'}
+            <p className="text-[11px] text-slate-400 font-medium truncate max-w-[130px] sm:max-w-xs">
+              {organization?.name || activeCampaignName || 'Anti-Proxy Biometric Attendance'}
             </p>
           </div>
         </div>
@@ -66,83 +70,18 @@ export function Header({
           {/* PWA Install Button */}
           <PWAInstallButton accentColor={accentColor} />
 
-          {/* Network status pill */}
-          <div
-            id="network-status-pill"
-            className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border ${
-              isOnline
-                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
-            }`}
-          >
-            {isOnline ? (
-              <>
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                <Wifi className="w-3 h-3" />
-                <span className="hidden md:inline">Online</span>
-              </>
-            ) : (
-              <>
-                <WifiOff className="w-3 h-3" />
-                <span>Offline</span>
-              </>
-            )}
-          </div>
-
-          {/* View switcher */}
-          <div
-            id="view-toggle-group"
-            className="flex items-center bg-[#131923] p-1 rounded-xl border border-[#222c3c]"
-          >
+          {/* Signed-in user sign out control if authenticated */}
+          {currentUserProfile && onSignOut && (
             <button
-              id="tab-attend-view"
-              onClick={() => onViewChange('attend')}
-              className={`flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                currentView === 'attend'
-                  ? 'text-[#0a0c10] shadow-sm font-bold'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-              style={{
-                backgroundColor: currentView === 'attend' ? accentColor : 'transparent',
-              }}
+              id="header-signout-btn"
+              onClick={onSignOut}
+              className="flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold text-rose-400 hover:text-rose-200 hover:bg-rose-950/40 border border-rose-900/30 transition-all cursor-pointer"
+              title="Sign Out"
             >
-              <QrCode className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Attend</span>
+              <LogOut className="w-3.5 h-3.5" />
+              <span className="text-[11px]">Sign Out</span>
             </button>
-
-            <button
-              id="tab-admin-view"
-              onClick={() => onViewChange('admin')}
-              className={`flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                currentView === 'admin'
-                  ? 'text-[#0a0c10] shadow-sm font-bold'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-              style={{
-                backgroundColor: currentView === 'admin' ? accentColor : 'transparent',
-              }}
-            >
-              <Users className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Admin</span>
-            </button>
-
-            <button
-              id="tab-auth-view"
-              onClick={() => onViewChange('auth')}
-              className={`flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                currentView === 'auth'
-                  ? 'text-[#0a0c10] shadow-sm font-bold'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-              style={{
-                backgroundColor: currentView === 'auth' ? accentColor : 'transparent',
-              }}
-              title="Organization Portal / Sign In"
-            >
-              <KeyRound className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Auth</span>
-            </button>
-          </div>
+          )}
         </div>
       </div>
     </header>

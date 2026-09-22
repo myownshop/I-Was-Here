@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   ShieldCheck,
   ArrowRight,
+  ArrowLeft,
   Loader2,
   Search,
   AlertOctagon,
@@ -32,7 +33,6 @@ import {
   resolveShortCode,
   checkStateCodeRegisteredToday,
   submitAttendance,
-  initializeDefaultOrgAndCampaign,
   getOrganization,
 } from '../../services/firebase';
 
@@ -40,12 +40,14 @@ interface AttendanceFormProps {
   initialCampaignId?: string;
   initialShortCode?: string;
   onCampaignLoaded?: (campaign: Campaign) => void;
+  onBackToHome?: () => void;
 }
 
 export function AttendanceForm({
   initialCampaignId,
   initialShortCode,
   onCampaignLoaded,
+  onBackToHome,
 }: AttendanceFormProps) {
   // Campaign & Org State
   const [campaign, setCampaign] = useState<Campaign | null>(null);
@@ -102,15 +104,6 @@ export function AttendanceForm({
           loaded = await getCampaignById(initialCampaignId);
         }
 
-        // If no URL param, load the default org & campaign
-        if (!loaded) {
-          const bootstrapped = await initializeDefaultOrgAndCampaign();
-          loaded = bootstrapped.campaign;
-          if (!isCancelled) {
-            setOrganization(bootstrapped.org);
-          }
-        }
-
         if (!isCancelled) {
           if (loaded) {
             setCampaign(loaded);
@@ -121,8 +114,11 @@ export function AttendanceForm({
               const org = await getOrganization(loaded.orgId);
               if (org) setOrganization(org);
             }
-          } else {
+          } else if (initialShortCode || initialCampaignId) {
             setCampaignError('Attendance session not found. Please check your link or short code.');
+          } else {
+            setCampaign(null);
+            setCampaignError(null);
           }
         }
       } catch (err) {
@@ -414,6 +410,17 @@ export function AttendanceForm({
 
   return (
     <div id="attendance-flow-container" className="w-full max-w-lg mx-auto p-4 sm:p-6">
+      {onBackToHome && (
+        <button
+          type="button"
+          onClick={onBackToHome}
+          className="inline-flex items-center space-x-1.5 text-xs text-slate-400 hover:text-white transition-colors mb-3 cursor-pointer py-1 px-2 rounded-lg hover:bg-[#141b26]"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" />
+          <span>Back to Overview</span>
+        </button>
+      )}
+
       {/* Session Loading Skeleton */}
       {campaignLoading ? (
         <div id="campaign-loading-skeleton" className="rounded-2xl bg-[#0e121a] border border-[#1b2332] p-6 space-y-4">
@@ -512,11 +519,11 @@ export function AttendanceForm({
             {/* State Code Input with automatic uppercase & slash formatting */}
             <FloatingInput
               id="input-state-code"
-              label="State Code (e.g. LA/23B/1234)"
+              label="State Code / Member ID"
               value={stateCode}
               onChange={handleStateCodeChange}
               error={stateCodeError}
-              hint="State / Batch / Call-up number"
+              hint="Official membership or call-up ID"
               isMono
               maxLength={14}
               autoComplete="off"
@@ -649,7 +656,7 @@ export function AttendanceForm({
                 </p>
               ) : forceOfflineMode ? (
                 <p className="text-[11px] text-amber-300 font-medium">
-                  ✓ Offline Mode: Generates an AES-256 encrypted file for zero-data submission to your Admin.
+                  ✓ Offline Mode: Generates an AES-256 encrypted file for zero-data submission to your Coordinator.
                 </p>
               ) : (
                 <p className="text-[11px] font-medium" style={{ color: accentColor }}>
@@ -665,9 +672,9 @@ export function AttendanceForm({
           <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 mx-auto mb-3">
             <AlertOctagon className="w-6 h-6" />
           </div>
-          <h3 className="text-base font-bold text-white mb-1">Enter CDS Session Code</h3>
+          <h3 className="text-base font-bold text-white mb-1">Enter Attendance Session Code</h3>
           <p className="text-xs text-slate-400 max-w-xs mx-auto mb-5 leading-relaxed">
-            {campaignError || 'Enter the 5-character alphanumeric short code displayed by your CDS Coordinator.'}
+            {campaignError || 'Enter the alphanumeric session code displayed by your Coordinator or projected at the venue.'}
           </p>
 
           <form onSubmit={handleResolveManualShortCode} className="max-w-xs mx-auto space-y-3">
@@ -677,8 +684,8 @@ export function AttendanceForm({
                 type="text"
                 value={shortCodeInput}
                 onChange={(e) => setShortCodeInput(e.target.value.toLowerCase())}
-                placeholder="e.g. xyz12"
-                maxLength={5}
+                placeholder="Enter Session Code"
+                maxLength={6}
                 className="w-full py-3 px-4 rounded-xl bg-[#141a24] border border-[#232f42] text-center font-mono text-base font-bold uppercase tracking-widest text-[#00FF66] outline-none focus:border-[#00FF66] focus:shadow-[0_0_15px_rgba(0,255,102,0.2)]"
               />
             </div>
@@ -694,7 +701,7 @@ export function AttendanceForm({
               ) : (
                 <Search className="w-4 h-4" />
               )}
-              <span>Load CDS Session</span>
+              <span>Load Session</span>
             </button>
           </form>
         </div>
