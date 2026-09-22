@@ -1,0 +1,11 @@
+{
+  "name": "IWasHere",
+  "description": "Multi-tenant, highly secure Progressive Web App for location-based attendance with precise geofencing, facial liveness detection, and dynamic organization theming.",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

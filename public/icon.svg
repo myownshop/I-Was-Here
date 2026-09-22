@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="bgGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#141c24" />
+      <stop offset="100%" stop-color="#0a0c10" />
+    </radialGradient>
+    <linearGradient id="neonGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00FF66" />
+      <stop offset="100%" stop-color="#00DD55" />
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="12" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+  <!-- Background -->
+  <rect width="512" height="512" rx="112" fill="url(#bgGrad)" />
+  <rect width="504" height="504" x="4" y="4" rx="108" fill="none" stroke="#1f2937" stroke-width="4" />
+  
+  <!-- Outer GPS Radar Ring -->
+  <circle cx="256" cy="256" r="180" fill="none" stroke="#00FF66" stroke-opacity="0.15" stroke-width="6" stroke-dasharray="16 12" />
+  <circle cx="256" cy="256" r="140" fill="none" stroke="#00FF66" stroke-opacity="0.3" stroke-width="4" />
+
+  <!-- Geolocation Pin & Biometric Scan Target -->
+  <g filter="url(#glow)">
+    <!-- Location Pin body -->
+    <path d="M256 110 C 195 110 146 159 146 220 C 146 295 256 385 256 385 C 256 385 366 295 366 220 C 366 159 317 110 256 110 Z" fill="url(#neonGrad)" />
+    <!-- Inner Dark Core -->
+    <circle cx="256" cy="216" r="46" fill="#0a0c10" />
+    <!-- Biometric Face Reticle Target -->
+    <circle cx="256" cy="216" r="28" fill="none" stroke="#00FF66" stroke-width="6" stroke-linecap="round" />
+    <circle cx="256" cy="216" r="8" fill="#00FF66" />
+  </g>
+  
+  <!-- Corner Scan Marks -->
+  <path d="M110 150 L110 110 L150 110" fill="none" stroke="#00FF66" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M402 150 L402 110 L362 110" fill="none" stroke="#00FF66" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M110 362 L110 402 L150 402" fill="none" stroke="#00FF66" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M402 362 L402 402 L362 402" fill="none" stroke="#00FF66" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" />
+</svg>

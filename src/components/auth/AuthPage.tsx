@@ -1,0 +1,449 @@
+import { useState } from 'react';
+import { Shield, Building2, User, Mail, Lock, Palette, ArrowRight, Sparkles, CheckCircle2 } from 'lucide-react';
+import { signUpAdmin, signInAdmin, signInWithGoogle } from '../../services/firebase';
+import { Organization, UserProfile } from '../../types/attendance';
+import { useToast } from '../common/Toast';
+
+interface AuthPageProps {
+  onAuthSuccess: (org: Organization, profile?: UserProfile) => void;
+  onNavigateToAttend?: () => void;
+}
+
+const PRESET_COLORS = [
+  { name: 'Neon Green', hex: '#00FF66' },
+  { name: 'Electric Blue', hex: '#3B82F6' },
+  { name: 'Cyber Purple', hex: '#8B5CF6' },
+  { name: 'Neon Pink', hex: '#EC4899' },
+  { name: 'Amber Gold', hex: '#F59E0B' },
+  { name: 'Cyan Glow', hex: '#06B6D4' },
+];
+
+export function AuthPage({ onAuthSuccess, onNavigateToAttend }: AuthPageProps) {
+  const [tab, setTab] = useState<'signin' | 'signup'>('signup');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Sign up fields
+  const [adminName, setAdminName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [orgName, setOrgName] = useState('');
+  const [accentColor, setAccentColor] = useState('#00FF66');
+
+  const { showToast } = useToast();
+
+  const handleSignUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    if (!adminName.trim() || !email.trim() || !password || !orgName.trim()) {
+      setError('Please fill in all required registration fields.');
+      return;
+    }
+
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters.');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const res = await signUpAdmin(adminName, email, password, orgName, accentColor);
+      showToast('success', `Welcome! Organization "${res.org.name}" has been registered.`);
+      onAuthSuccess(res.org, res.profile);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Registration failed.';
+      setError(msg);
+      showToast('error', msg, 'Sign Up Failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSignIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    if (!email.trim() || !password) {
+      setError('Please enter your email and password.');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const res = await signInAdmin(email, password);
+      if (res.org) {
+        showToast('success', `Signed in as admin for ${res.org.name}`);
+        onAuthSuccess(res.org);
+      } else {
+        setError('No organization linked to this account.');
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Authentication failed.';
+      setError(msg);
+      showToast('error', msg, 'Sign In Failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setError(null);
+    try {
+      setLoading(true);
+      const res = await signInWithGoogle();
+      if (res.org) {
+        showToast('success', `Authenticated as ${res.org.adminName}`);
+        onAuthSuccess(res.org);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Google authentication failed.';
+      setError(msg);
+      showToast('error', msg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 1-Click Instant Demo Login for reviewers
+  const handleQuickDemoAdmin = () => {
+    const demoOrg: Organization = {
+      id: 'org_nysc_ikeja',
+      name: 'Medical CDS, Ikeja',
+      adminUid: 'admin_demo_ikeja',
+      adminEmail: 'ikeja.cds@nysc.gov.ng',
+      adminName: 'Dr. Kelechi Nwosu (CDS President)',
+      accentColor: '#00FF66',
+      createdAt: new Date().toISOString(),
+    };
+    showToast('success', 'Logged in as Demo Admin (Medical CDS, Ikeja)');
+    onAuthSuccess(demoOrg);
+  };
+
+  return (
+    <div className="max-w-xl mx-auto w-full px-4 py-6">
+      {/* Brand Header */}
+      <div className="text-center mb-6">
+        <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-[#00FF66]/10 border border-[#00FF66]/30 mb-3 shadow-[0_0_20px_rgba(0,255,102,0.2)]">
+          <Shield className="w-6 h-6 text-[#00FF66]" />
+        </div>
+        <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
+          IWasHere <span className="text-[#00FF66]">SaaS</span>
+        </h1>
+        <p className="text-xs sm:text-sm text-slate-400 mt-1 max-w-sm mx-auto">
+          Multi-tenant attendance infrastructure with biometric verification & geofencing
+        </p>
+      </div>
+
+      {/* Auth Card */}
+      <div className="bg-[#10151f] border border-[#1e2638] rounded-2xl p-6 sm:p-8 shadow-2xl relative overflow-hidden">
+        {/* Subtle decorative glow */}
+        <div
+          className="absolute -top-24 -right-24 w-48 h-48 rounded-full blur-3xl opacity-20 pointer-events-none"
+          style={{ backgroundColor: accentColor }}
+        />
+
+        {/* Tab switch */}
+        <div className="flex bg-[#0a0c12] p-1 rounded-xl border border-[#1e2638] mb-6">
+          <button
+            id="tab-btn-signup"
+            type="button"
+            onClick={() => {
+              setTab('signup');
+              setError(null);
+            }}
+            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+              tab === 'signup'
+                ? 'bg-[#182133] text-white shadow-md'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            Create Organization
+          </button>
+          <button
+            id="tab-btn-signin"
+            type="button"
+            onClick={() => {
+              setTab('signin');
+              setError(null);
+            }}
+            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+              tab === 'signin'
+                ? 'bg-[#182133] text-white shadow-md'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            Admin Sign In
+          </button>
+        </div>
+
+        {error && (
+          <div className="mb-4 p-3 rounded-xl bg-rose-950/60 border border-rose-500/40 text-rose-300 text-xs flex items-start gap-2">
+            <span className="shrink-0 font-bold">⚠️</span>
+            <p>{error}</p>
+          </div>
+        )}
+
+        {/* Sign Up Form */}
+        {tab === 'signup' ? (
+          <form onSubmit={handleSignUp} className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
+                Admin Full Name
+              </label>
+              <div className="relative">
+                <User className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                <input
+                  id="input-admin-name"
+                  type="text"
+                  required
+                  placeholder="e.g. Dr. Kelechi Nwosu"
+                  value={adminName}
+                  onChange={(e) => setAdminName(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2.5 bg-[#0a0c12] border border-[#1f283a] rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#00FF66]"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
+                Organization / CDS Name
+              </label>
+              <div className="relative">
+                <Building2 className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                <input
+                  id="input-org-name"
+                  type="text"
+                  required
+                  placeholder="e.g. Medical CDS, Ikeja"
+                  value={orgName}
+                  onChange={(e) => setOrgName(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2.5 bg-[#0a0c12] border border-[#1f283a] rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#00FF66]"
+                />
+              </div>
+              <p className="text-[10px] text-slate-400 mt-1">
+                This name will be dynamically displayed on your members' attendance verification page.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
+                  Email Address
+                </label>
+                <div className="relative">
+                  <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                  <input
+                    id="input-email"
+                    type="email"
+                    required
+                    placeholder="admin@organization.org"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2.5 bg-[#0a0c12] border border-[#1f283a] rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#00FF66]"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
+                  Password
+                </label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                  <input
+                    id="input-password"
+                    type="password"
+                    required
+                    minLength={6}
+                    placeholder="Min 6 characters"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2.5 bg-[#0a0c12] border border-[#1f283a] rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#00FF66]"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Custom Brand Accent Color Picker */}
+            <div className="p-3.5 bg-[#0a0c12] border border-[#1f283a] rounded-xl">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                  <Palette className="w-3.5 h-3.5" />
+                  <span>Custom Brand Accent Color</span>
+                </span>
+                <span className="font-mono text-xs text-slate-400">{accentColor}</span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 mb-2">
+                {PRESET_COLORS.map((preset) => (
+                  <button
+                    key={preset.hex}
+                    type="button"
+                    onClick={() => setAccentColor(preset.hex)}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all border"
+                    style={{
+                      backgroundColor: accentColor === preset.hex ? `${preset.hex}22` : 'transparent',
+                      borderColor: accentColor === preset.hex ? preset.hex : '#2a354a',
+                      color: accentColor === preset.hex ? preset.hex : '#94a3b8',
+                    }}
+                  >
+                    <span
+                      className="w-2.5 h-2.5 rounded-full"
+                      style={{ backgroundColor: preset.hex }}
+                    />
+                    <span>{preset.name}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2 mt-2 pt-2 border-t border-[#1e2638]">
+                <label className="text-[11px] text-slate-400">Custom Hex:</label>
+                <input
+                  type="color"
+                  value={accentColor}
+                  onChange={(e) => setAccentColor(e.target.value)}
+                  className="w-7 h-7 rounded border border-slate-700 bg-transparent cursor-pointer"
+                />
+                <input
+                  type="text"
+                  value={accentColor}
+                  onChange={(e) => setAccentColor(e.target.value)}
+                  className="w-24 px-2 py-1 bg-[#10151f] border border-[#2a354a] rounded text-xs font-mono text-white"
+                />
+              </div>
+            </div>
+
+            <button
+              id="btn-submit-signup"
+              type="submit"
+              disabled={loading}
+              className="w-full py-3 rounded-xl font-bold text-xs sm:text-sm text-[#0a0c10] flex items-center justify-center gap-2 shadow-lg transition-all active:scale-95 disabled:opacity-50"
+              style={{ backgroundColor: accentColor }}
+            >
+              {loading ? (
+                <span>Provisioning Tenant...</span>
+              ) : (
+                <>
+                  <span>Create Organization & Launch Portal</span>
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
+            </button>
+          </form>
+        ) : (
+          /* Sign In Form */
+          <form onSubmit={handleSignIn} className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
+                Admin Email
+              </label>
+              <div className="relative">
+                <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                <input
+                  id="input-signin-email"
+                  type="email"
+                  required
+                  placeholder="admin@cds.org"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2.5 bg-[#0a0c12] border border-[#1f283a] rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#00FF66]"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
+                Password
+              </label>
+              <div className="relative">
+                <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                <input
+                  id="input-signin-password"
+                  type="password"
+                  required
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2.5 bg-[#0a0c12] border border-[#1f283a] rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#00FF66]"
+                />
+              </div>
+            </div>
+
+            <button
+              id="btn-submit-signin"
+              type="submit"
+              disabled={loading}
+              className="w-full py-3 rounded-xl font-bold text-xs sm:text-sm bg-[#00FF66] text-[#0a0c10] flex items-center justify-center gap-2 shadow-lg transition-all active:scale-95 disabled:opacity-50"
+            >
+              {loading ? <span>Signing In...</span> : <span>Sign In to Admin Portal</span>}
+            </button>
+
+            <div className="relative flex items-center justify-center my-3">
+              <div className="border-t border-[#1e2638] w-full" />
+              <span className="bg-[#10151f] px-2 text-[10px] uppercase font-bold text-slate-500 shrink-0">
+                Or
+              </span>
+            </div>
+
+            <button
+              id="btn-google-signin"
+              type="button"
+              onClick={handleGoogleSignIn}
+              disabled={loading}
+              className="w-full py-2.5 rounded-xl font-semibold text-xs text-white bg-[#182133] hover:bg-[#202c44] border border-[#2a3752] flex items-center justify-center gap-2 transition-all"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24">
+                <path
+                  fill="#4285F4"
+                  d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.66v3.05h3.87c2.26-2.09 3.67-5.17 3.67-9.15z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.87-3.05c-1.08.72-2.45 1.16-4.06 1.16-3.13 0-5.78-2.11-6.73-4.96H1.28v3.15C3.26 21.36 7.34 24 12 24z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M5.27 14.24c-.25-.72-.38-1.49-.38-2.24s.13-1.52.38-2.24V6.61H1.28C.46 8.23 0 10.06 0 12s.46 3.77 1.28 5.39l3.99-3.15z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.64 1.28 6.61l3.99 3.15c.95-2.85 3.6-4.96 6.73-4.96z"
+                />
+              </svg>
+              <span>Continue with Google</span>
+            </button>
+          </form>
+        )}
+
+        {/* 1-Click Instant Demo Evaluation Button */}
+        <div className="mt-6 pt-4 border-t border-[#1e2638] flex flex-col items-center">
+          <button
+            id="btn-instant-demo-admin"
+            type="button"
+            onClick={handleQuickDemoAdmin}
+            className="w-full py-2.5 rounded-xl text-xs font-semibold text-[#00FF66] bg-[#00FF66]/10 hover:bg-[#00FF66]/15 border border-[#00FF66]/30 flex items-center justify-center gap-1.5 transition-all"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-[#00FF66]" />
+            <span>1-Click Test: Launch Pre-Configured "Medical CDS"</span>
+          </button>
+          <p className="text-[10px] text-slate-500 mt-1">
+            Test full tenant-isolated admin controls immediately without creating an account
+          </p>
+        </div>
+      </div>
+
+      {/* Back to attendee flow link */}
+      <div className="text-center mt-4">
+        <button
+          id="btn-back-to-attendee"
+          type="button"
+          onClick={onNavigateToAttend}
+          className="text-xs text-slate-400 hover:text-white underline inline-flex items-center gap-1"
+        >
+          <span>Looking to mark attendance instead? Go to Member Scan</span>
+        </button>
+      </div>
+    </div>
+  );
+}

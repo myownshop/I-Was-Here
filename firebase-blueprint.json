@@ -1,0 +1,225 @@
+{
+  "entities": {
+    "Organization": {
+      "title": "Organization",
+      "description": "Tenant organization (e.g., CDS Group or Company)",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier of the organization"
+        },
+        "name": {
+          "type": "string",
+          "description": "Organization display name",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "adminUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the owning admin"
+        },
+        "adminEmail": {
+          "type": "string",
+          "description": "Admin email address"
+        },
+        "adminName": {
+          "type": "string",
+          "description": "Admin full name"
+        },
+        "accentColor": {
+          "type": "string",
+          "description": "Custom primary hex accent color (e.g. #00FF66)",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp"
+        }
+      },
+      "required": ["id", "name", "adminUid", "adminEmail", "accentColor"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Admin profile linking user UID to their tenant organization",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID"
+        },
+        "email": {
+          "type": "string",
+          "description": "User email"
+        },
+        "name": {
+          "type": "string",
+          "description": "User display name"
+        },
+        "orgId": {
+          "type": "string",
+          "description": "Associated organization ID"
+        },
+        "role": {
+          "type": "string",
+          "description": "User role",
+          "enum": ["admin"]
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Account creation timestamp"
+        }
+      },
+      "required": ["uid", "email", "name", "orgId", "role"]
+    },
+    "Campaign": {
+      "title": "Campaign",
+      "description": "An attendance session strictly scoped to a tenant organization",
+      "type": "object",
+      "properties": {
+        "orgId": {
+          "type": "string",
+          "description": "Tenant organization identifier",
+          "minLength": 2,
+          "maxLength": 128
+        },
+        "name": {
+          "type": "string",
+          "description": "The title of the attendance session",
+          "minLength": 3,
+          "maxLength": 100
+        },
+        "date": {
+          "type": "string",
+          "description": "Date of session in YYYY-MM-DD format",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "targetLatitude": {
+          "type": "number",
+          "description": "Venue target latitude coordinate"
+        },
+        "targetLongitude": {
+          "type": "number",
+          "description": "Venue target longitude coordinate"
+        },
+        "allowedRadius": {
+          "type": "number",
+          "description": "Allowed geofence radius in meters"
+        },
+        "shortCode": {
+          "type": "string",
+          "description": "5-character alphanumeric manual short link",
+          "pattern": "^[a-zA-Z0-9]{5}$"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp when campaign was created"
+        }
+      },
+      "required": ["orgId", "name", "date", "targetLatitude", "targetLongitude", "allowedRadius", "shortCode"]
+    },
+    "ShortLink": {
+      "title": "ShortLink",
+      "description": "Mapping from a 5-character short code to a campaign ID and org ID",
+      "type": "object",
+      "properties": {
+        "shortCode": {
+          "type": "string",
+          "description": "5-character alphanumeric short code",
+          "pattern": "^[a-zA-Z0-9]{5}$"
+        },
+        "campaignId": {
+          "type": "string",
+          "description": "Target campaign identifier",
+          "maxLength": 128
+        },
+        "orgId": {
+          "type": "string",
+          "description": "Organization identifier",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp"
+        }
+      },
+      "required": ["shortCode", "campaignId"]
+    },
+    "Attendee": {
+      "title": "Attendee",
+      "description": "A verified attendee record with face biometric and GPS coordinates",
+      "type": "object",
+      "properties": {
+        "campaignId": {
+          "type": "string",
+          "description": "Associated campaign ID",
+          "maxLength": 128
+        },
+        "orgId": {
+          "type": "string",
+          "description": "Associated tenant organization ID",
+          "maxLength": 128
+        },
+        "name": {
+          "type": "string",
+          "description": "Attendee full name",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "stateCode": {
+          "type": "string",
+          "description": "Unique identifier / NYSC State Code",
+          "minLength": 3,
+          "maxLength": 30
+        },
+        "photoUrl": {
+          "type": "string",
+          "description": "Optimized thumbnail or storage URL of verified face"
+        },
+        "latitude": {
+          "type": "number",
+          "description": "GPS latitude"
+        },
+        "longitude": {
+          "type": "number",
+          "description": "GPS longitude"
+        },
+        "distanceMeters": {
+          "type": "number",
+          "description": "Calculated distance from campaign center in meters"
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "Timestamp of attendance submission"
+        },
+        "isOfflineSync": {
+          "type": "boolean",
+          "description": "Whether imported from an offline .iwh file"
+        }
+      },
+      "required": ["campaignId", "name", "stateCode", "photoUrl", "latitude", "longitude", "distanceMeters", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/organizations/{orgId}": {
+      "schema": "Organization",
+      "description": "Tenant organizations registered by admins"
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Admin user profile mapping UID to organization"
+    },
+    "/campaigns/{campaignId}": {
+      "schema": "Campaign",
+      "description": "Attendance campaign sessions strictly scoped to an organization"
+    },
+    "/short_links/{shortCode}": {
+      "schema": "ShortLink",
+      "description": "Lookup index for 5-char short codes mapping to campaigns"
+    },
+    "/campaigns/{campaignId}/attendees/{attendeeId}": {
+      "schema": "Attendee",
+      "description": "Verified attendance records for a specific campaign"
+    }
+  }
+}

@@ -1,0 +1,115 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function getUserOrgId() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.orgId;
+    }
+
+    function isValidOrganization(data) {
+      return data.name is string && data.name.size() >= 2 && data.name.size() <= 100
+        && data.adminUid is string && data.adminUid.size() <= 128
+        && data.adminEmail is string
+        && data.accentColor is string && data.accentColor.size() <= 10;
+    }
+
+    function isValidUserProfile(data) {
+      return data.uid is string && data.uid == request.auth.uid
+        && data.email is string
+        && data.name is string && data.name.size() >= 2
+        && data.orgId is string && data.orgId.size() <= 128
+        && data.role == 'admin';
+    }
+
+    function isValidCampaign(data) {
+      return data.name is string && data.name.size() >= 3 && data.name.size() <= 100
+        && data.orgId is string && data.orgId.size() <= 128
+        && data.date is string && data.date.size() == 10
+        && data.targetLatitude is number
+        && data.targetLongitude is number
+        && data.allowedRadius is number
+        && data.shortCode is string && data.shortCode.size() == 5;
+    }
+
+    function isValidShortLink(data) {
+      return data.shortCode is string && data.shortCode.size() == 5
+        && data.campaignId is string && data.campaignId.size() <= 128;
+    }
+
+    function isValidAttendee(data) {
+      return data.campaignId is string && data.campaignId.size() <= 128
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 100
+        && data.stateCode is string && data.stateCode.size() >= 3 && data.stateCode.size() <= 30
+        && data.photoUrl is string && data.photoUrl.size() > 0
+        && data.latitude is number
+        && data.longitude is number
+        && data.distanceMeters is number;
+    }
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Organizations (Tenants)
+    match /organizations/{orgId} {
+      // Attendees need to get org to render name and accent color on attendance page
+      allow get: if true;
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(orgId) && isValidOrganization(request.resource.data)
+                    && request.resource.data.adminUid == request.auth.uid;
+      allow update: if isSignedIn() && isValidId(orgId) && isValidOrganization(request.resource.data)
+                    && resource.data.adminUid == request.auth.uid;
+    }
+
+    // Admin User Profiles
+    match /users/{userId} {
+      allow get: if isSignedIn() && (request.auth.uid == userId);
+      allow create: if isSignedIn() && (request.auth.uid == userId) && isValidUserProfile(request.resource.data);
+      allow update: if isSignedIn() && (request.auth.uid == userId) && isValidUserProfile(request.resource.data);
+    }
+
+    // Campaigns (Attendance Sessions)
+    match /campaigns/{campaignId} {
+      // Single campaign viewable by attendees or admin
+      allow get: if true;
+      // List scoped to the admin's organization or authenticated admin
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(campaignId) && isValidCampaign(request.resource.data)
+                    && (request.resource.data.orgId == getUserOrgId());
+      allow update: if isSignedIn() && isValidId(campaignId) && isValidCampaign(request.resource.data)
+                    && (resource.data.orgId == getUserOrgId());
+      allow delete: if isSignedIn() && isValidId(campaignId)
+                    && (resource.data.orgId == getUserOrgId());
+
+      // Attendees in a campaign
+      match /attendees/{attendeeId} {
+        // Attendance records readable for admin & dashboard
+        allow get, list: if true;
+        // Attendees submit their record or admin imports offline .iwh file
+        allow create: if isValidId(attendeeId) && isValidAttendee(request.resource.data);
+      }
+    }
+
+    // 5-character short link index
+    match /short_links/{shortCode} {
+      allow get: if true;
+      allow list: if isSignedIn();
+      allow create: if isValidId(shortCode) && isValidShortLink(request.resource.data);
+      allow update: if isSignedIn() && isValidId(shortCode) && isValidShortLink(request.resource.data);
+    }
+
+    // Connection health check
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+  }
+}
