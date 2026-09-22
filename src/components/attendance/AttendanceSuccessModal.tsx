@@ -95,18 +95,25 @@ export function AttendanceSuccessModal({
         )}
       </p>
 
-      {/* Offline Transfer Guide Box */}
+      {/* Offline Transfer & Auto-Sync Guide Box */}
       {isOfflinePackage && (
-        <div className="w-full mb-5 p-4 rounded-2xl bg-amber-950/40 border border-amber-500/40 text-amber-200 text-xs space-y-2">
+        <div className="w-full mb-5 p-4 rounded-2xl bg-[#141b26] border border-amber-500/40 text-xs space-y-3 shadow-lg">
           <div className="flex items-center gap-2 font-bold text-amber-300">
-            <Send className="w-4 h-4" />
-            <span>How to deliver your attendance:</span>
+            <Send className="w-4 h-4 shrink-0" />
+            <span>Dual Offline Reliability Guarantee:</span>
           </div>
-          <ol className="list-decimal pl-4 space-y-1 text-slate-300 text-[11px] leading-relaxed">
-            <li>Check your browser <strong>Downloads</strong> folder for <code className="text-white font-mono bg-black/40 px-1 py-0.5 rounded">{offlineFilename}</code>.</li>
-            <li>Send it to your Coordinator via <strong>WhatsApp</strong>, <strong>Telegram</strong>, or <strong>Bluetooth</strong>.</li>
-            <li>The Coordinator drops it into the <strong>Admin Offline Importer</strong> to verify your attendance.</li>
-          </ol>
+
+          <div className="space-y-2 text-slate-300 text-[11px] leading-relaxed">
+            <div className="p-2.5 rounded-xl bg-blue-950/40 border border-blue-500/30 text-blue-200">
+              <strong className="text-white block mb-0.5">1. PWA IndexedDB Auto-Sync (Active)</strong>
+              Your biometric roll call is stored securely in this browser&apos;s local IndexedDB. It will automatically upload to Firebase the moment your device reconnects to the internet.
+            </div>
+
+            <div className="p-2.5 rounded-xl bg-amber-950/30 border border-amber-500/20 text-slate-300">
+              <strong className="text-amber-200 block mb-0.5">2. Manual Coordinator Delivery (.iwh backup)</strong>
+              We also downloaded <code className="text-white font-mono bg-black/40 px-1 py-0.5 rounded">{offlineFilename}</code>. You can send this encrypted file to your coordinator via WhatsApp or Bluetooth for instant verification in the Admin Importer.
+            </div>
+          </div>
         </div>
       )}
 

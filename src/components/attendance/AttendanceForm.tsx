@@ -28,6 +28,7 @@ import { CompressionResult } from '../../utils/imageCompression';
 import { formatStateCodeInput, isValidStateCode, getClientIpAddress } from '../../utils/nysc';
 import { formatDistance } from '../../utils/geo';
 import { encryptOfflineRecord, downloadIwhFile } from '../../utils/crypto';
+import { serializeAndStoreAttendance } from '../../utils/indexedDB';
 import {
   getCampaignById,
   resolveShortCode,
@@ -252,6 +253,21 @@ export function AttendanceForm({
     // === OFFLINE ROUTING ===
     if (shouldSubmitOffline) {
       try {
+        // 1. Serialize and persist locally in PWA IndexedDB for automatic cloud synchronization
+        const storedLocal = await serializeAndStoreAttendance({
+          campaignId: campaign.id,
+          orgId: campaign.orgId || organization?.id || '',
+          name: name.trim(),
+          stateCode: stateCode.trim().toUpperCase(),
+          photoDataUrl: capturedPhoto.dataUrl,
+          latitude: lat,
+          longitude: lng,
+          distanceMeters: currentDistance,
+          loggedIp: 'Offline PWA Device',
+          timestamp,
+        });
+
+        // 2. Also generate encrypted .iwh file for physical verification backup
         const offlineRecord: OfflineAttendanceRecord = {
           name: name.trim(),
           stateCode: stateCode.trim().toUpperCase(),
@@ -269,13 +285,13 @@ export function AttendanceForm({
         const downloadedName = downloadIwhFile(encrypted);
 
         const syntheticAttendee: Attendee = {
-          id: `att_offline_${Date.now()}`,
+          id: storedLocal.id,
           campaignId: campaign.id,
           orgId: campaign.orgId,
           name: name.trim(),
           stateCode: stateCode.trim().toUpperCase(),
           photoUrl: capturedPhoto.dataUrl,
-          loggedIp: 'Offline Device Sync',
+          loggedIp: 'Offline IndexedDB Sync',
           latitude: lat,
           longitude: lng,
           distanceMeters: currentDistance,
@@ -287,10 +303,14 @@ export function AttendanceForm({
         setIsOfflinePackage(true);
         setOfflineFilename(downloadedName);
         setCompletedAttendee(syntheticAttendee);
-        showToast('success', `Encrypted package ${downloadedName} downloaded.`, 'Offline Attendance Saved');
+        showToast(
+          'success',
+          'Stored in offline IndexedDB! Attendance will automatically sync to Firebase once reconnected.',
+          'Offline Record Queued'
+        );
       } catch (cryptoErr) {
-        console.error('Encryption error:', cryptoErr);
-        showToast('error', 'Failed to generate offline .iwh package.', 'Offline Error');
+        console.error('Offline storage/encryption error:', cryptoErr);
+        showToast('error', 'Failed to save offline record to IndexedDB.', 'Offline Error');
       } finally {
         setIsSubmitting(false);
       }
@@ -337,9 +357,22 @@ export function AttendanceForm({
       setCompletedAttendee(newAttendee);
       showToast('success', 'Attendance and biometrics logged successfully!', 'Verified');
     } catch (err) {
-      console.warn('Online submission failed, offering offline fallback:', err);
-      // Seamless auto-fallback to offline encryption if network dropped mid-submission
+      console.warn('Online submission failed, falling back to IndexedDB local serialization:', err);
+      // Seamless auto-fallback to IndexedDB serialization and encrypted .iwh backup
       try {
+        const storedLocal = await serializeAndStoreAttendance({
+          campaignId: campaign.id,
+          orgId: campaign.orgId || organization?.id || '',
+          name: name.trim(),
+          stateCode: stateCode.trim().toUpperCase(),
+          photoDataUrl: capturedPhoto.dataUrl,
+          latitude: lat,
+          longitude: lng,
+          distanceMeters: currentDistance,
+          loggedIp: 'Offline Fallback',
+          timestamp,
+        });
+
         const fallbackRecord: OfflineAttendanceRecord = {
           name: name.trim(),
           stateCode: stateCode.trim().toUpperCase(),
@@ -356,7 +389,7 @@ export function AttendanceForm({
         const downloadedName = downloadIwhFile(encrypted);
 
         const syntheticAttendee: Attendee = {
-          id: `att_offline_${Date.now()}`,
+          id: storedLocal.id,
           campaignId: campaign.id,
           name: name.trim(),
           stateCode: stateCode.trim().toUpperCase(),
@@ -373,7 +406,11 @@ export function AttendanceForm({
         setIsOfflinePackage(true);
         setOfflineFilename(downloadedName);
         setCompletedAttendee(syntheticAttendee);
-        showToast('info', 'Cloud unavailable: Generated secure .iwh file for manual delivery.', 'Offline Fallback');
+        showToast(
+          'info',
+          'Cloud connection interrupted: Queued in IndexedDB and downloaded .iwh backup.',
+          'Offline Queued'
+        );
       } catch {
         showToast('error', 'Submission failed. Please check device connectivity.', 'Error');
       }

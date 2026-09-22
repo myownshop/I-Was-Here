@@ -7,6 +7,7 @@ import { AuthPage } from './components/auth/AuthPage';
 import { ToastContainer, showToast } from './components/common/Toast';
 import { OfflineIndicator } from './components/common/OfflineIndicator';
 import { Campaign, Organization, UserProfile } from './types/attendance';
+import { setupAutoSyncOnReconnect } from './utils/indexedDB';
 import {
   testConnection,
   subscribeToAuth,
@@ -137,10 +138,24 @@ export default function App() {
       setAuthLoading(false);
     });
 
+    // Initialize PWA IndexedDB auto-sync on network reconnection
+    const unsubscribeAutoSync = setupAutoSyncOnReconnect({
+      onSyncComplete: (report) => {
+        if (report.syncedCount > 0) {
+          showToast(
+            'success',
+            `Reconnected! Synchronized ${report.syncedCount} queued attendance record${report.syncedCount > 1 ? 's' : ''} to Firebase.`,
+            'PWA Cloud Sync'
+          );
+        }
+      },
+    });
+
     return () => {
       window.removeEventListener('popstate', handleLocationChange);
       window.removeEventListener('hashchange', handleLocationChange);
       unsubscribeAuth();
+      unsubscribeAutoSync();
     };
   }, [parseRoute]);
 

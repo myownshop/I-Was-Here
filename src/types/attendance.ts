@@ -127,3 +127,34 @@ export interface EncryptedIwhFile {
     orgId: string;
   };
 }
+
+/**
+ * PWA IndexedDB Serialized Attendance Record
+ * Saved locally when navigator.onLine is false and queued for automatic sync with Firebase
+ */
+export interface SerializedAttendanceRecord {
+  id: string;
+  campaignId: string;
+  orgId: string;
+  name: string;
+  stateCode: string;
+  photoDataUrl: string;
+  latitude: number;
+  longitude: number;
+  distanceMeters: number;
+  loggedIp: string;
+  timestamp: string; // ISO string
+  createdAt: number; // Unix timestamp
+  status: 'pending' | 'syncing' | 'failed' | 'synced';
+  syncAttempts: number;
+  lastSyncError?: string;
+  isOfflineSync: true;
+}
+
+export interface OfflineSyncReport {
+  success: boolean;
+  syncedCount: number;
+  failedCount: number;
+  total: number;
+  errors: Array<{ id: string; stateCode: string; error: string }>;
+}

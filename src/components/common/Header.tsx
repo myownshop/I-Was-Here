@@ -1,6 +1,7 @@
 import { ShieldCheck, LogOut } from 'lucide-react';
 import { Organization, UserProfile } from '../../types/attendance';
 import { PWAInstallButton } from './PWAInstallButton';
+import { OfflineSyncStatus } from './OfflineSyncStatus';
 
 interface HeaderProps {
   currentView: 'home' | 'attend' | 'portal' | 'auth';
@@ -67,6 +68,9 @@ export function Header({
 
         {/* Center / Right controls */}
         <div className="flex items-center space-x-2 sm:space-x-2.5">
+          {/* Offline Sync Status & Queue Count */}
+          <OfflineSyncStatus accentColor={accentColor} />
+
           {/* PWA Install Button */}
           <PWAInstallButton accentColor={accentColor} />
 
