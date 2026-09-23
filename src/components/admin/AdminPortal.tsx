@@ -16,18 +16,21 @@ import {
   History,
   Lock,
   ArrowLeft,
+  Edit3,
 } from 'lucide-react';
 import { Campaign, Attendee, Organization } from '../../types/attendance';
 import { CampaignQRCard } from './CampaignQRCard';
 import { AttendeeCard } from './AttendeeCard';
 import { DashboardWidget } from './DashboardWidget';
 import { CreateCampaignModal } from './CreateCampaignModal';
+import { EditCampaignModal } from './EditCampaignModal';
 import { PhotoAuditModal } from './PhotoAuditModal';
 import { OfflineDataImporter } from './OfflineDataImporter';
 import { OrganizationSettings } from './OrganizationSettings';
 import { CloseSessionModal } from './CloseSessionModal';
 import { SessionHistoryView } from './SessionHistoryView';
 import { exportAttendeesToCsv } from '../../utils/csvExport';
+import { getWATDateString } from '../../utils/dateUtils';
 import {
   getCampaignsForOrg,
   getAllCampaigns,
@@ -72,6 +75,7 @@ export function AdminPortal({
 
   // Modals
   const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(false);
+  const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null);
   const [closeModalCampaign, setCloseModalCampaign] = useState<Campaign | null>(null);
   const [isClosingSession, setIsClosingSession] = useState<boolean>(false);
   const [auditAttendee, setAuditAttendee] = useState<Attendee | null>(null);
@@ -158,7 +162,7 @@ export function AdminPortal({
     return campaigns.find((c) => c.id === selectedCampaignId) || activeCampaigns[0] || campaigns[0] || null;
   }, [campaigns, selectedCampaignId, activeCampaigns]);
 
-  // Filtered Attendees list (by Search Query and Date)
+  // Filtered Attendees list (by Search Query and Date in WAT)
   const filteredAttendees = useMemo(() => {
     return attendees.filter((att) => {
       const matchesSearch =
@@ -166,7 +170,7 @@ export function AdminPortal({
         att.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         att.stateCode.toLowerCase().includes(searchQuery.toLowerCase());
 
-      const matchesDate = !selectedDate || att.timestamp.startsWith(selectedDate);
+      const matchesDate = !selectedDate || getWATDateString(att.timestamp) === selectedDate;
 
       return matchesSearch && matchesDate;
     });
@@ -210,6 +214,30 @@ export function AdminPortal({
     setCampaigns((prev) => [newCamp, ...prev]);
     setSelectedCampaignId(newCamp.id);
     setActiveTab('active');
+  };
+
+  const handleCampaignUpdated = (updated: Campaign) => {
+    setCampaigns((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+    if (selectedCampaignId === updated.id) {
+      loadAttendees(updated.id);
+    }
+    loadCampaigns();
+  };
+
+  const handleCampaignDeleted = (campaignId: string) => {
+    setCampaigns((prev) => prev.filter((c) => c.id !== campaignId));
+    if (selectedCampaignId === campaignId) {
+      const remaining = campaigns.filter((c) => c.id !== campaignId);
+      const remainingActive = remaining.filter((c) => c.status !== 'closed' && !c.isClosed);
+      if (remainingActive.length > 0) {
+        setSelectedCampaignId(remainingActive[0].id);
+      } else if (remaining.length > 0) {
+        setSelectedCampaignId(remaining[0].id);
+      } else {
+        setSelectedCampaignId('');
+      }
+    }
+    loadCampaigns();
   };
 
   // Close / End Session Logic
@@ -409,6 +437,21 @@ export function AdminPortal({
 
           {activeTab === 'active' && (
             <>
+              {/* Edit Session Button in top bar */}
+              {selectedCampaign && (
+                <button
+                  id="btn-edit-active-session"
+                  type="button"
+                  onClick={() => setEditingCampaign(selectedCampaign)}
+                  className="py-2.5 px-3.5 rounded-xl bg-[#141b27] hover:bg-[#1c2637] text-slate-200 hover:text-white border border-[#243144] hover:border-[#384862] text-xs font-bold flex items-center space-x-1.5 shadow-sm transition-all active:scale-95 cursor-pointer"
+                  title="Edit session details, venue, coordinates, radius, or date"
+                >
+                  <Edit3 className="w-3.5 h-3.5 text-sky-400" />
+                  <span className="hidden sm:inline">Edit Session</span>
+                  <span className="sm:hidden">Edit</span>
+                </button>
+              )}
+
               {/* Close Session Button in top bar */}
               {selectedCampaign && !isSelectedClosed && (
                 <button
@@ -583,6 +626,7 @@ export function AdminPortal({
           accentColor={accentColor}
           onSelectCampaignForRoster={handleInspectHistoryRoster}
           onReopenCampaign={handleReopenSession}
+          onEditCampaign={(camp) => setEditingCampaign(camp)}
         />
       )}
 
@@ -615,6 +659,14 @@ export function AdminPortal({
               </div>
 
               <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingCampaign(selectedCampaign)}
+                  className="px-3 py-1.5 rounded-xl bg-[#141b27] hover:bg-[#1c2637] border border-[#243144] text-slate-200 text-xs font-bold transition-all cursor-pointer flex items-center gap-1"
+                >
+                  <Edit3 className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Edit Session</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => handleReopenSession(selectedCampaign)}
@@ -670,11 +722,12 @@ export function AdminPortal({
             </div>
           ) : (
             <>
-              {/* Featured QR & Short Link Card with Close Session Button */}
+              {/* Featured QR & Short Link Card with Close & Edit Session Button */}
               {selectedCampaign && (
                 <CampaignQRCard
                   campaign={selectedCampaign}
                   onOpenSession={() => onLaunchAttendeeFlow(selectedCampaign)}
+                  onEditSession={() => setEditingCampaign(selectedCampaign)}
                   onCloseSession={() => setCloseModalCampaign(selectedCampaign)}
                   onReopenSession={() => handleReopenSession(selectedCampaign)}
                   isHistoryMode={isSelectedClosed}
@@ -788,12 +841,14 @@ export function AdminPortal({
 
                 <div className="flex items-center space-x-3 w-full sm:w-auto justify-between sm:justify-end">
                   <div className="flex items-center space-x-1.5 text-xs text-slate-400">
-                    <Calendar className="w-3.5 h-3.5" />
+                    <Calendar className="w-3.5 h-3.5 text-[#00FF66]" />
+                    <span className="text-[10px] font-mono text-slate-400 font-bold">WAT:</span>
                     <input
                       type="date"
                       value={selectedDate}
                       onChange={(e) => setSelectedDate(e.target.value)}
-                      className="bg-[#141a24] border border-[#232f42] rounded-lg px-2.5 py-1 text-xs text-slate-200 outline-none"
+                      title="Filter attendees by West Africa Time (WAT) date"
+                      className="bg-[#141a24] border border-[#232f42] rounded-lg px-2.5 py-1 text-xs text-slate-200 outline-none focus:border-[#00FF66]"
                     />
                     {selectedDate && (
                       <button
@@ -877,6 +932,16 @@ export function AdminPortal({
         orgId={activeOrg?.id || 'org_default'}
         onClose={() => setIsCreateModalOpen(false)}
         onCampaignCreated={handleCampaignCreated}
+        organization={activeOrg}
+      />
+
+      {/* Edit Campaign Modal */}
+      <EditCampaignModal
+        isOpen={Boolean(editingCampaign)}
+        campaign={editingCampaign}
+        onClose={() => setEditingCampaign(null)}
+        onCampaignUpdated={handleCampaignUpdated}
+        onCampaignDeleted={handleCampaignDeleted}
         organization={activeOrg}
       />
 

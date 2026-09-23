@@ -34,6 +34,7 @@ import { formatDistance } from '../../utils/geo';
 import { encryptOfflineRecord, downloadIwhFile } from '../../utils/crypto';
 import { serializeAndStoreAttendance } from '../../utils/indexedDB';
 import { isTamperingDetected } from '../../utils/antiTampering';
+import { formatWATDate, formatWATTime, getCurrentWATTimeHHMM } from '../../utils/dateUtils';
 import {
   getCampaignById,
   resolveShortCode,
@@ -811,7 +812,7 @@ export function AttendanceForm({
                     CODE: {campaign.shortCode}
                   </span>
                   <span className="text-[11px] text-slate-400 font-medium">
-                    {new Date(campaign.date).toLocaleDateString('en-GB', {
+                    {formatWATDate(campaign.date, {
                       day: 'numeric',
                       month: 'short',
                       year: 'numeric',
@@ -875,7 +876,7 @@ export function AttendanceForm({
               onChange={(e) => setTimeBlockCode(e.target.value.toUpperCase())}
               hint={
                 campaign.timeBlocks && campaign.timeBlocks.length > 0
-                  ? `Active Windows: ${campaign.timeBlocks.map((b) => `${b.code} (${b.startTime}-${b.endTime})`).join(', ')}`
+                  ? `Active Windows (WAT): ${campaign.timeBlocks.map((b) => `${b.code} (${b.startTime}-${b.endTime})`).join(', ')}`
                   : 'Assigned session code (e.g. X12)'
               }
               isMono

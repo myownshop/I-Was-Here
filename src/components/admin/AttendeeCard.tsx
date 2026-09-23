@@ -1,6 +1,7 @@
 import { MapPin, Clock, Globe, ShieldCheck, Eye, AlertTriangle } from 'lucide-react';
 import { Attendee } from '../../types/attendance';
 import { formatDistance } from '../../utils/geo';
+import { formatWATDate, formatWATTime } from '../../utils/dateUtils';
 
 interface AttendeeCardProps {
   attendee: Attendee;
@@ -13,16 +14,8 @@ export function AttendeeCard({ attendee, allowedRadius, onViewPhoto }: AttendeeC
   const isTampered = Boolean(attendee.tampered);
   const isLate = attendee.attendanceStatus === 'late';
 
-  const timeString = new Date(attendee.timestamp).toLocaleTimeString('en-GB', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
-
-  const dateString = new Date(attendee.timestamp).toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'short',
-  });
+  const timeString = formatWATTime(attendee.timestamp, { includeSeconds: true });
+  const dateString = formatWATDate(attendee.timestamp, { day: 'numeric', month: 'short' });
 
   let cardClasses = 'bg-[#0e131c] hover:bg-[#121824] border-[#1f2839] hover:border-[#2b374d]';
   if (isTampered) {
@@ -100,7 +93,7 @@ export function AttendeeCard({ attendee, allowedRadius, onViewPhoto }: AttendeeC
               </span>
             )}
             <span className="text-[11px] text-slate-400 truncate">
-              {dateString} • {timeString}
+              {dateString} • {timeString} <span className="text-[#00FF66]/80 text-[10px] font-mono font-semibold">WAT</span>
             </span>
           </div>
 

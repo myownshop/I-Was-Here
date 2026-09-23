@@ -10,11 +10,13 @@ import {
   Eye,
   MapPin,
   Lock,
+  Edit3,
 } from 'lucide-react';
 import { Campaign, Attendee, Organization } from '../../types/attendance';
 import { getCampaignAttendees } from '../../services/firebase';
 import { exportAttendeesToCsv } from '../../utils/csvExport';
 import { showToast } from '../common/Toast';
+import { formatWATDateTime } from '../../utils/dateUtils';
 
 interface SessionHistoryViewProps {
   closedCampaigns: Campaign[];
@@ -22,6 +24,7 @@ interface SessionHistoryViewProps {
   accentColor?: string;
   onSelectCampaignForRoster: (campaign: Campaign) => void;
   onReopenCampaign: (campaign: Campaign) => void;
+  onEditCampaign?: (campaign: Campaign) => void;
 }
 
 interface CampaignStats {
@@ -36,6 +39,7 @@ export function SessionHistoryView({
   accentColor = '#00FF66',
   onSelectCampaignForRoster,
   onReopenCampaign,
+  onEditCampaign,
 }: SessionHistoryViewProps) {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [statsMap, setStatsMap] = useState<Record<string, CampaignStats>>({});
@@ -175,13 +179,8 @@ export function SessionHistoryView({
         {filteredHistory.map((camp) => {
           const stats = statsMap[camp.id] || { total: 0, compliantCount: 0, complianceRate: 100 };
           const closedDateDisplay = camp.closedAt
-            ? new Date(camp.closedAt).toLocaleDateString(undefined, {
-                month: 'short',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-              })
-            : camp.date;
+            ? formatWATDateTime(camp.closedAt, { includeTimezone: true })
+            : `${camp.date} (WAT)`;
 
           return (
             <div
@@ -266,6 +265,17 @@ export function SessionHistoryView({
                   <Eye className="w-3.5 h-3.5 text-sky-400" />
                   <span>View Roster</span>
                 </button>
+
+                {onEditCampaign && (
+                  <button
+                    type="button"
+                    onClick={() => onEditCampaign(camp)}
+                    className="p-2 rounded-xl bg-[#141c29] hover:bg-[#1d2738] text-slate-200 hover:text-white border border-[#263449] transition-all cursor-pointer"
+                    title="Edit session venue, coordinates, radius, or date"
+                  >
+                    <Edit3 className="w-3.5 h-3.5 text-sky-400" />
+                  </button>
+                )}
 
                 <button
                   type="button"

@@ -448,6 +448,95 @@ export async function createCampaign(
 }
 
 /**
+ * Updates an existing CDS session's details (name, date, geofence, radius, shortCode, timeBlocks, status).
+ */
+export async function updateCampaign(
+  campaignId: string,
+  updates: Partial<Omit<Campaign, 'id' | 'createdAt'>>
+): Promise<Campaign> {
+  const cachedCampaigns = getLocalCache<Campaign>(LOCAL_CAMPAIGNS_KEY, []);
+  const existing = cachedCampaigns.find((c) => c.id === campaignId);
+
+  const updatedCampaign: Campaign = {
+    id: campaignId,
+    orgId: updates.orgId ?? existing?.orgId ?? '',
+    name: updates.name ?? existing?.name ?? 'Updated Session',
+    date: updates.date ?? existing?.date ?? new Date().toISOString().split('T')[0],
+    targetLatitude: updates.targetLatitude ?? existing?.targetLatitude ?? 0,
+    targetLongitude: updates.targetLongitude ?? existing?.targetLongitude ?? 0,
+    allowedRadius: updates.allowedRadius ?? existing?.allowedRadius ?? 100,
+    shortCode: (updates.shortCode ?? existing?.shortCode ?? '').toLowerCase().trim(),
+    timeBlocks: updates.timeBlocks ?? existing?.timeBlocks ?? [],
+    createdAt: existing?.createdAt ?? new Date().toISOString(),
+    status: updates.status ?? existing?.status ?? 'active',
+    isClosed: updates.isClosed !== undefined ? updates.isClosed : (existing?.isClosed ?? false),
+    closedAt: updates.closedAt !== undefined ? updates.closedAt : existing?.closedAt,
+  };
+
+  try {
+    const campaignRef = doc(db, 'campaigns', campaignId);
+    await setDoc(
+      campaignRef,
+      {
+        name: updatedCampaign.name,
+        orgId: updatedCampaign.orgId,
+        date: updatedCampaign.date,
+        targetLatitude: Number(updatedCampaign.targetLatitude),
+        targetLongitude: Number(updatedCampaign.targetLongitude),
+        allowedRadius: Number(updatedCampaign.allowedRadius),
+        shortCode: updatedCampaign.shortCode,
+        timeBlocks: updatedCampaign.timeBlocks || [],
+        status: updatedCampaign.status,
+        isClosed: updatedCampaign.isClosed,
+        closedAt: updatedCampaign.closedAt || null,
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+
+    if (updatedCampaign.shortCode) {
+      await setDoc(
+        doc(db, 'short_links', updatedCampaign.shortCode),
+        {
+          shortCode: updatedCampaign.shortCode,
+          campaignId,
+          orgId: updatedCampaign.orgId || '',
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+    }
+  } catch (error) {
+    console.warn('Firestore updateCampaign write error, updating cache fallback:', error);
+  }
+
+  const updatedList = cachedCampaigns.map((c) => (c.id === campaignId ? updatedCampaign : c));
+  if (!cachedCampaigns.some((c) => c.id === campaignId)) {
+    updatedList.unshift(updatedCampaign);
+  }
+  setLocalCache(LOCAL_CAMPAIGNS_KEY, updatedList);
+
+  return updatedCampaign;
+}
+
+/**
+ * Deletes a session and cleans up local caches.
+ */
+export async function deleteCampaign(campaignId: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, 'campaigns', campaignId));
+  } catch (error) {
+    console.warn('Firestore deleteCampaign error:', error);
+  }
+
+  const cached = getLocalCache<Campaign>(LOCAL_CAMPAIGNS_KEY, []);
+  setLocalCache(
+    LOCAL_CAMPAIGNS_KEY,
+    cached.filter((c) => c.id !== campaignId)
+  );
+}
+
+/**
  * Ends/closes an active session, marking it as closed and moving it to history.
  */
 export async function closeCampaign(campaignId: string): Promise<Campaign> {

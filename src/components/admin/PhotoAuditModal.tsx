@@ -1,6 +1,7 @@
 import { X, ShieldCheck, MapPin, Globe, Calendar, User, Download } from 'lucide-react';
 import { Attendee } from '../../types/attendance';
 import { formatDistance } from '../../utils/geo';
+import { formatWATDateTime } from '../../utils/dateUtils';
 
 interface PhotoAuditModalProps {
   attendee: Attendee | null;
@@ -64,8 +65,10 @@ export function PhotoAuditModal({ attendee, onClose }: PhotoAuditModalProps) {
           </div>
 
           <div className="flex justify-between items-center text-slate-300">
-            <span className="text-slate-400">Timestamp:</span>
-            <span>{new Date(attendee.timestamp).toLocaleString('en-GB')}</span>
+            <span className="text-slate-400">Timestamp (WAT):</span>
+            <span className="font-mono text-[11px] font-semibold text-slate-200">
+              {formatWATDateTime(attendee.timestamp, { includeSeconds: true, includeTimezone: true })}
+            </span>
           </div>
 
           <div className="flex justify-between items-center text-slate-300">

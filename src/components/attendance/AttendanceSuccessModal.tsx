@@ -1,6 +1,7 @@
-import { ShieldCheck, CheckCircle2, Download, RefreshCw, Calendar, MapPin, Hash, Building2, Send, Lock, Zap } from 'lucide-react';
+import { ShieldCheck, CheckCircle2, Download, RefreshCw, Calendar, MapPin, Hash, Building2, Send, Lock, Zap, Clock } from 'lucide-react';
 import { Attendee, Campaign } from '../../types/attendance';
 import { formatDistance } from '../../utils/geo';
+import { formatWATDate, formatWATTime } from '../../utils/dateUtils';
 
 interface AttendanceSuccessModalProps {
   attendee: Attendee;
@@ -25,17 +26,16 @@ export function AttendanceSuccessModal({
   onReset,
   onRedownloadIwh,
 }: AttendanceSuccessModalProps) {
-  const formattedDate = new Date(attendee.timestamp).toLocaleDateString('en-GB', {
+  const formattedDate = formatWATDate(attendee.timestamp, {
     weekday: 'long',
     day: 'numeric',
     month: 'short',
     year: 'numeric',
   });
 
-  const formattedTime = new Date(attendee.timestamp).toLocaleTimeString('en-GB', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
+  const formattedTime = formatWATTime(attendee.timestamp, {
+    includeSeconds: true,
+    includeTimezone: true,
   });
 
   const handlePrintOrShare = () => {

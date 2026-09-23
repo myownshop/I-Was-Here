@@ -6,6 +6,7 @@ import { generateShortCode } from '../../utils/nysc';
 import { getCurrentCoordinates } from '../../utils/geo';
 import { createCampaign } from '../../services/firebase';
 import { showToast } from '../common/Toast';
+import { getTodayWATDateString } from '../../utils/dateUtils';
 
 interface CreateCampaignModalProps {
   isOpen: boolean;
@@ -30,7 +31,7 @@ export function CreateCampaignModal({
   onCampaignCreated,
   organization,
 }: CreateCampaignModalProps) {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getTodayWATDateString();
 
   const defaultVenueTitle = organization?.name
     ? `${organization.name} - ${organization.meetingSchedule || 'Weekly Meeting'}`

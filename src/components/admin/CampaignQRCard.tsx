@@ -1,13 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import QRCode from 'qrcode';
-import { Download, Copy, Check, ExternalLink, QrCode as QrIcon, Share2, Lock, RotateCcw } from 'lucide-react';
+import { Download, Copy, Check, ExternalLink, QrCode as QrIcon, Share2, Lock, RotateCcw, Edit3 } from 'lucide-react';
 import { Campaign } from '../../types/attendance';
 import { showToast } from '../common/Toast';
 import { ShareQRModal } from '../common/ShareQRModal';
+import { formatWATTime } from '../../utils/dateUtils';
 
 interface CampaignQRCardProps {
   campaign: Campaign;
   onOpenSession: () => void;
+  onEditSession?: () => void;
   onCloseSession?: () => void;
   onReopenSession?: () => void;
   isHistoryMode?: boolean;
@@ -17,6 +19,7 @@ interface CampaignQRCardProps {
 export function CampaignQRCard({
   campaign,
   onOpenSession,
+  onEditSession,
   onCloseSession,
   onReopenSession,
   isHistoryMode = false,
@@ -136,8 +139,8 @@ export function CampaignQRCard({
                 {campaign.allowedRadius}m
               </span>
               {campaign.closedAt && (
-                <span className="ml-2 text-slate-500">
-                  • Ended: {new Date(campaign.closedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                <span className="ml-2 text-slate-400">
+                  • Ended: {formatWATTime(campaign.closedAt, { includeTimezone: true })}
                 </span>
               )}
             </p>
@@ -217,6 +220,20 @@ export function CampaignQRCard({
                     <span>Open Scanner</span>
                   </button>
 
+                  {/* Edit Session Button */}
+                  {onEditSession && (
+                    <button
+                      id={`btn-edit-session-${campaign.id}`}
+                      type="button"
+                      onClick={onEditSession}
+                      className="py-2 px-3.5 rounded-xl bg-[#141b26] hover:bg-[#1c2637] text-slate-200 hover:text-white border border-[#29354b] text-xs font-bold flex items-center space-x-2 transition-all cursor-pointer"
+                      title="Edit venue, date, geofence radius, and time blocks"
+                    >
+                      <Edit3 className="w-3.5 h-3.5 text-sky-400" />
+                      <span>Edit Session</span>
+                    </button>
+                  )}
+
                   {/* Close / End Session Button */}
                   {onCloseSession && (
                     <button
@@ -242,6 +259,19 @@ export function CampaignQRCard({
                     <Download className="w-3.5 h-3.5 text-slate-300" />
                     <span>Download QR</span>
                   </button>
+
+                  {onEditSession && (
+                    <button
+                      id={`btn-edit-session-history-${campaign.id}`}
+                      type="button"
+                      onClick={onEditSession}
+                      className="py-2 px-3.5 rounded-xl bg-[#141b26] hover:bg-[#1c2637] text-slate-200 hover:text-white border border-[#29354b] text-xs font-bold flex items-center space-x-2 transition-all cursor-pointer"
+                      title="Edit past session details"
+                    >
+                      <Edit3 className="w-3.5 h-3.5 text-sky-400" />
+                      <span>Edit Details</span>
+                    </button>
+                  )}
 
                   {onReopenSession && (
                     <button

@@ -11,6 +11,12 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { Attendee, Campaign } from '../../types/attendance';
+import {
+  formatWATDate,
+  formatWATTime,
+  getWATDateString,
+  getWATHour,
+} from '../../utils/dateUtils';
 
 interface DashboardWidgetProps {
   attendees: Attendee[];
@@ -83,7 +89,7 @@ export function DashboardWidget({
           date: d,
           count: 1,
           cumulative: runningTotal,
-          label: d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          label: formatWATTime(d, { includeSeconds: true, includeTimezone: true }),
           details: {
             compliantCount: att.distanceMeters <= (campaign?.allowedRadius || 100) ? 1 : 0,
             offlineCount: att.isOfflineSync ? 1 : 0,
@@ -94,11 +100,12 @@ export function DashboardWidget({
     }
 
     if (viewMode === 'daily') {
-      // Group by YYYY-MM-DD
+      // Group by YYYY-MM-DD in WAT
       const groups = new Map<
         string,
         {
           dateObj: Date;
+          dayLabel: string;
           count: number;
           compliant: number;
           offline: number;
@@ -108,16 +115,16 @@ export function DashboardWidget({
 
       sorted.forEach((att) => {
         const d = new Date(att.timestamp);
-        const dayKey = d.toISOString().split('T')[0];
+        const dayKey = getWATDateString(d);
         const existing = groups.get(dayKey);
         const isCompliant = att.distanceMeters <= (campaign?.allowedRadius || 100);
         const isOffline = Boolean(att.isOfflineSync);
 
         if (!existing) {
-          // use start of day in local representation
           const dayDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
           groups.set(dayKey, {
             dateObj: dayDate,
+            dayLabel: formatWATDate(d, { month: 'short', day: 'numeric' }),
             count: 1,
             compliant: isCompliant ? 1 : 0,
             offline: isOffline ? 1 : 0,
@@ -140,7 +147,7 @@ export function DashboardWidget({
           date: item.dateObj,
           count: item.count,
           cumulative,
-          label: item.dateObj.toLocaleDateString([], { month: 'short', day: 'numeric' }),
+          label: item.dayLabel,
           details: {
             compliantCount: item.compliant,
             offlineCount: item.offline,
@@ -150,7 +157,7 @@ export function DashboardWidget({
       });
     }
 
-    // Hourly Distribution (0-23 hours)
+    // Hourly Distribution (0-23 hours in WAT)
     const hourCounts = new Array(24).fill(0).map((_, hour) => ({
       hour,
       count: 0,
@@ -160,8 +167,7 @@ export function DashboardWidget({
     }));
 
     sorted.forEach((att) => {
-      const d = new Date(att.timestamp);
-      const hour = d.getHours();
+      const hour = getWATHour(att.timestamp);
       hourCounts[hour].count += 1;
       if (att.distanceMeters <= (campaign?.allowedRadius || 100)) {
         hourCounts[hour].compliant += 1;
@@ -174,14 +180,14 @@ export function DashboardWidget({
       }
     });
 
-    // Reference today's date for hourly points
+    // Reference base date for hourly points
     const baseDate = new Date();
     let cumulative = 0;
     return hourCounts.map((h) => {
       cumulative += h.count;
       const d = new Date(baseDate);
       d.setHours(h.hour, 0, 0, 0);
-      const hourStr = `${h.hour.toString().padStart(2, '0')}:00`;
+      const hourStr = `${h.hour.toString().padStart(2, '0')}:00 WAT`;
       return {
         date: d,
         count: h.count,
@@ -196,7 +202,7 @@ export function DashboardWidget({
     });
   }, [attendees, viewMode, campaign]);
 
-  // Derived Summary KPIs
+  // Derived Summary KPIs in WAT
   const kpiData = useMemo(() => {
     if (!attendees || attendees.length === 0) {
       return {
@@ -225,13 +231,13 @@ export function DashboardWidget({
     const first = new Date(sorted[0].timestamp);
     const last = new Date(sorted[sorted.length - 1].timestamp);
 
-    const earliestCheckIn = first.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const latestCheckIn = last.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const earliestCheckIn = formatWATTime(first, { includeTimezone: true });
+    const latestCheckIn = formatWATTime(last, { includeTimezone: true });
 
-    // Find peak hour
+    // Find peak hour in WAT
     const hourMap: Record<number, number> = {};
     sorted.forEach((a) => {
-      const h = new Date(a.timestamp).getHours();
+      const h = getWATHour(a.timestamp);
       hourMap[h] = (hourMap[h] || 0) + 1;
     });
 
@@ -244,10 +250,13 @@ export function DashboardWidget({
       }
     });
 
-    const peakHour = maxCount > 0 ? `${peakH.toString().padStart(2, '0')}:00 - ${(peakH + 1).toString().padStart(2, '0')}:00` : '—';
+    const peakHour =
+      maxCount > 0
+        ? `${peakH.toString().padStart(2, '0')}:00 - ${(peakH + 1).toString().padStart(2, '0')}:00 WAT`
+        : '—';
 
-    // Unique days
-    const days = new Set(sorted.map((a) => a.timestamp.split('T')[0])).size;
+    // Unique days in WAT
+    const days = new Set(sorted.map((a) => getWATDateString(a.timestamp))).size;
     const avgPerDay = days > 0 ? (sorted.length / days).toFixed(1) : sorted.length;
 
     return {
@@ -524,6 +533,9 @@ export function DashboardWidget({
               </h3>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
                 D3.js Realtime
+              </span>
+              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-[#00FF66]/10 text-[#00FF66] border border-[#00FF66]/30">
+                WAT (UTC+1)
               </span>
             </div>
             <p className="text-[11px] text-slate-400">

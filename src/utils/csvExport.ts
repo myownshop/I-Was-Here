@@ -1,4 +1,5 @@
 import { Attendee, Campaign, Organization } from '../types/attendance';
+import { formatWATDate, formatWATTime, getTodayWATDateString, getWATDateString } from './dateUtils';
 
 /**
  * Escapes fields for CSV according to RFC 4180 rules.
@@ -29,14 +30,14 @@ export function exportAttendeesToCsv({
 }): { success: boolean; count: number; filename: string } {
   const allowedRadius = campaign?.allowedRadius || 100;
 
-  // Define comprehensive columns
+  // Define comprehensive columns explicitly highlighting West Africa Time (WAT)
   const headers = [
     'S/N',
     'State Code / ID',
     'Full Name',
-    'Date',
+    'Date (WAT)',
+    'Time (WAT - West Africa Time)',
     'Time (UTC)',
-    'Local Time',
     'Geofence Compliant',
     'Distance (Meters)',
     'Allowed Radius (Meters)',
@@ -54,23 +55,21 @@ export function exportAttendeesToCsv({
   const rows = attendees.map((att, index) => {
     const isCompliant = att.distanceMeters <= allowedRadius;
     const dateObj = new Date(att.timestamp);
-    const dateStr = !isNaN(dateObj.getTime())
-      ? dateObj.toISOString().split('T')[0]
-      : att.timestamp;
-    const timeUtc = !isNaN(dateObj.getTime())
+    const isValidDate = !isNaN(dateObj.getTime());
+
+    const dateWatStr = isValidDate ? getWATDateString(dateObj) : att.timestamp;
+    const timeWatStr = isValidDate ? formatWATTime(dateObj, { includeSeconds: true, includeTimezone: true }) : 'N/A';
+    const timeUtc = isValidDate
       ? dateObj.toISOString().split('T')[1].replace('Z', '')
-      : 'N/A';
-    const localTimeStr = !isNaN(dateObj.getTime())
-      ? dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
       : 'N/A';
 
     return [
       escapeCsvCell(index + 1),
       escapeCsvCell(att.stateCode),
       escapeCsvCell(att.name),
-      escapeCsvCell(dateStr),
+      escapeCsvCell(dateWatStr),
+      escapeCsvCell(timeWatStr),
       escapeCsvCell(timeUtc),
-      escapeCsvCell(localTimeStr),
       escapeCsvCell(isCompliant ? 'PASS' : 'FLAGGED'),
       escapeCsvCell(Math.round(att.distanceMeters)),
       escapeCsvCell(allowedRadius),
@@ -92,13 +91,13 @@ export function exportAttendeesToCsv({
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
 
-  // Generate clean, descriptive filename: e.g. Attendance_Ikeja_med24_2026-09-22.csv
+  // Generate clean, descriptive filename with WAT today date: e.g. Attendance_Ikeja_med24_2026-09-22.csv
   const sanitizedOrg = (organization?.name || 'Org')
     .replace(/[^a-zA-Z0-9_-]/g, '_')
     .substring(0, 20);
   const sanitizedCode = campaign?.shortCode || 'session';
-  const todayStr = new Date().toISOString().split('T')[0];
-  const filename = `Attendance_${sanitizedOrg}_${sanitizedCode}_${todayStr}.csv`;
+  const todayStr = getTodayWATDateString();
+  const filename = `Attendance_${sanitizedOrg}_${sanitizedCode}_${todayStr}_WAT.csv`;
 
   const link = document.createElement('a');
   link.setAttribute('href', url);
