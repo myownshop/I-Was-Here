@@ -52,8 +52,22 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
       if (!navigator?.mediaDevices?.getUserMedia) {
         setPermissionState('no_device');
         setErrorMessage('Camera access is not supported in this browser environment. You can upload a portrait photo or use the NYSC sample test photo below.');
-        setInputMode('upload');
         return;
+      }
+
+      // Check available media devices first if supported
+      if (navigator?.mediaDevices?.enumerateDevices) {
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const videoDevices = devices.filter((d) => d.kind === 'videoinput');
+          if (devices.length > 0 && videoDevices.length === 0) {
+            setPermissionState('no_device');
+            setErrorMessage('No camera device detected on this hardware. Please upload a photo or use the sample test photo below.');
+            return;
+          }
+        } catch {
+          // Continue to getUserMedia attempt
+        }
       }
 
       setPermissionState('prompt');
@@ -74,7 +88,6 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
         });
       } catch (firstErr: unknown) {
         caughtError = firstErr;
-        console.warn('Initial facingMode camera constraint failed, attempting fallback to basic video:', firstErr);
         // 2. Fallback to basic video constraint without facingMode (accommodates desktop/USB webcams)
         try {
           stream = await navigator.mediaDevices.getUserMedia({
@@ -103,7 +116,6 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
 
       setPermissionState('granted');
     } catch (err: unknown) {
-      console.error('Camera access error:', err);
       const errMsg = err instanceof Error ? err.message : String(err);
       const errName = err instanceof Error ? err.name : '';
 
@@ -122,18 +134,19 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
         errMsg.toLowerCase().includes('not allowed');
 
       if (isDenied) {
+        console.warn('Camera access denied:', errMsg);
         setPermissionState('denied');
         setErrorMessage(
           'Camera access was blocked by your browser. You can enable it in your browser settings, or switch to the Upload Photo option.'
         );
       } else if (isNoDevice) {
+        console.info('No camera device found on host:', errMsg);
         setPermissionState('no_device');
         setErrorMessage(
           'No camera device detected on this device. You can upload a photo or use the verified NYSC sample photo below.'
         );
-        // Automatically switch to upload mode so user is not stuck
-        setInputMode('upload');
       } else {
+        console.warn('Camera access unavailable:', errMsg);
         setPermissionState('error');
         setErrorMessage(errMsg || 'Unable to access camera on this device.');
       }
@@ -141,7 +154,7 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
   }, []);
 
   useEffect(() => {
-    if (inputMode === 'camera') {
+    if (inputMode === 'camera' && permissionState !== 'no_device' && permissionState !== 'denied') {
       startCamera(facingMode);
     }
 
@@ -151,7 +164,7 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
         streamRef.current = null;
       }
     };
-  }, [facingMode, inputMode, startCamera]);
+  }, [facingMode, inputMode, startCamera, permissionState]);
 
   // Face Detection Loop for Live Video
   useEffect(() => {

@@ -154,12 +154,14 @@ export function AdminPortal({
   const stats = useMemo(() => {
     const total = attendees.length;
     if (total === 0) {
-      return { total: 0, compliantCount: 0, complianceRate: 100, avgDistance: 0, offlineSyncCount: 0 };
+      return { total: 0, compliantCount: 0, complianceRate: 100, avgDistance: 0, offlineSyncCount: 0, tamperedCount: 0, lateCount: 0 };
     }
 
     const radius = selectedCampaign?.allowedRadius || 100;
     const compliant = attendees.filter((a) => a.distanceMeters <= radius).length;
     const offlineSyncCount = attendees.filter((a) => a.isOfflineSync).length;
+    const tamperedCount = attendees.filter((a) => a.tampered).length;
+    const lateCount = attendees.filter((a) => a.attendanceStatus === 'late').length;
     const totalDist = attendees.reduce((acc, curr) => acc + curr.distanceMeters, 0);
 
     return {
@@ -168,6 +170,8 @@ export function AdminPortal({
       complianceRate: Math.round((compliant / total) * 100),
       avgDistance: Math.round(totalDist / total),
       offlineSyncCount,
+      tamperedCount,
+      lateCount,
     };
   }, [attendees, selectedCampaign]);
 
@@ -516,6 +520,7 @@ export function AdminPortal({
               {selectedCampaign && (
                 <OfflineDataImporter
                   campaign={selectedCampaign}
+                  organization={activeOrg}
                   accentColor={accentColor}
                   onRecordsImported={() => {
                     if (selectedCampaignId) {
@@ -523,6 +528,28 @@ export function AdminPortal({
                     }
                   }}
                 />
+              )}
+
+              {/* Clock Tampering Security Alert Banner */}
+              {stats.tamperedCount > 0 && (
+                <div className="bg-rose-950/40 border-2 border-rose-500/80 rounded-2xl p-4 flex items-center justify-between gap-3 text-rose-200 animate-in fade-in shadow-[0_0_20px_rgba(244,63,94,0.2)]">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-rose-600 flex items-center justify-center text-white shrink-0 font-black text-lg">
+                      ⚠️
+                    </div>
+                    <div>
+                      <h4 className="font-extrabold text-white text-sm">
+                        {stats.tamperedCount} Clock Manipulation Anomalies Detected!
+                      </h4>
+                      <p className="text-xs text-rose-300">
+                        Hardware timer divergence checks caught attempts to alter device OS clocks backwards to spoof attendance time.
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-xs font-mono font-bold bg-rose-900/80 text-rose-100 px-3 py-1 rounded-lg border border-rose-500">
+                    FLAGGED
+                  </span>
+                </div>
               )}
 
               {/* Summary Metrics Cards */}

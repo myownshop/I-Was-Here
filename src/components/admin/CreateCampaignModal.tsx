@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { X, Navigation, MapPin, Calendar, Sparkles, Loader2, PlusCircle } from 'lucide-react';
-import { Campaign, Organization } from '../../types/attendance';
+import { X, Navigation, MapPin, Calendar, Sparkles, Loader2, PlusCircle, Clock } from 'lucide-react';
+import { Campaign, Organization, TimeBlock } from '../../types/attendance';
 import { FloatingInput } from '../common/FloatingInput';
 import { generateShortCode } from '../../utils/nysc';
 import { getCurrentCoordinates } from '../../utils/geo';
@@ -47,10 +47,40 @@ export function CreateCampaignModal({
   const [allowedRadius, setAllowedRadius] = useState<number>(organization?.defaultRadius || 100);
   const [shortCode, setShortCode] = useState<string>(generateShortCode());
 
+  // Time-Blocks for roll-call windows and anti-tamper checking
+  const [timeBlocks, setTimeBlocks] = useState<TimeBlock[]>([
+    { id: 'tb_1', code: 'X12', startTime: '08:00', endTime: '08:30', label: 'Early Window' },
+    { id: 'tb_2', code: 'Y34', startTime: '08:30', endTime: '09:15', label: 'General Roll Call' },
+  ]);
+
   const [locating, setLocating] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
 
   if (!isOpen) return null;
+
+  const handleAddTimeBlock = () => {
+    const randomCode = Math.random().toString(36).substring(2, 5).toUpperCase();
+    setTimeBlocks((prev) => [
+      ...prev,
+      {
+        id: `tb_${Date.now()}`,
+        code: randomCode,
+        startTime: '09:00',
+        endTime: '09:30',
+        label: 'Late Window',
+      },
+    ]);
+  };
+
+  const handleRemoveTimeBlock = (index: number) => {
+    setTimeBlocks((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleUpdateTimeBlock = (index: number, field: keyof TimeBlock, value: string) => {
+    setTimeBlocks((prev) =>
+      prev.map((block, i) => (i === index ? { ...block, [field]: value } : block))
+    );
+  };
 
   // Use Current GPS coordinates
   const handleUseCurrentLocation = async () => {
@@ -105,6 +135,7 @@ export function CreateCampaignModal({
         targetLongitude: lng,
         allowedRadius: Number(allowedRadius),
         shortCode: shortCode.toLowerCase().trim(),
+        timeBlocks: timeBlocks.length > 0 ? timeBlocks : undefined,
       });
 
       showToast('success', `Created session: ${created.name} (${created.shortCode})`, 'Campaign Live');
@@ -298,6 +329,76 @@ export function CreateCampaignModal({
               >
                 <Sparkles className="w-3.5 h-3.5 text-[#00FF66]" />
               </button>
+            </div>
+          </div>
+
+          {/* Time-Blocks Configuration */}
+          <div className="bg-[#0a0d14] rounded-xl p-3.5 border border-[#1e2738] space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Clock className="w-3.5 h-3.5 text-[#00FF66]" />
+                <div>
+                  <span className="text-[10px] uppercase tracking-wider text-slate-300 font-bold block">
+                    Time Blocks & Anti-Late Windows
+                  </span>
+                  <span className="text-[11px] text-slate-500">Auto-validates offline & online submission windows</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleAddTimeBlock}
+                className="text-[10px] px-2.5 py-1 rounded-lg bg-[#00FF66]/10 text-[#00FF66] border border-[#00FF66]/30 font-bold hover:bg-[#00FF66]/20 transition-all cursor-pointer"
+              >
+                + Add Window
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              {timeBlocks.map((block, idx) => (
+                <div key={block.id} className="flex items-center gap-2 bg-[#121722] p-2 rounded-lg border border-[#212b3c]">
+                  <input
+                    type="text"
+                    value={block.code}
+                    onChange={(e) => handleUpdateTimeBlock(idx, 'code', e.target.value.toUpperCase())}
+                    className="w-16 px-2 py-1 text-xs font-mono font-bold text-center bg-[#0a0d14] text-[#00FF66] border border-[#263346] rounded"
+                    placeholder="CODE"
+                    maxLength={4}
+                    title="Time-Block Code"
+                  />
+                  <input
+                    type="time"
+                    value={block.startTime}
+                    onChange={(e) => handleUpdateTimeBlock(idx, 'startTime', e.target.value)}
+                    className="w-24 px-1.5 py-1 text-xs font-mono bg-[#0a0d14] text-white border border-[#263346] rounded"
+                    title="Start Time"
+                  />
+                  <span className="text-slate-500 text-xs">-</span>
+                  <input
+                    type="time"
+                    value={block.endTime}
+                    onChange={(e) => handleUpdateTimeBlock(idx, 'endTime', e.target.value)}
+                    className="w-24 px-1.5 py-1 text-xs font-mono bg-[#0a0d14] text-white border border-[#263346] rounded"
+                    title="End Time"
+                  />
+                  <input
+                    type="text"
+                    value={block.label || ''}
+                    onChange={(e) => handleUpdateTimeBlock(idx, 'label', e.target.value)}
+                    className="flex-1 px-2 py-1 text-xs bg-[#0a0d14] text-slate-300 border border-[#263346] rounded"
+                    placeholder="Label (e.g. Early)"
+                  />
+                  {timeBlocks.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveTimeBlock(idx)}
+                      className="text-slate-500 hover:text-rose-400 p-1"
+                      title="Remove Time Block"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
 

@@ -43,3 +43,13 @@
 .glow-neon {
   animation: pulseGlow 2s infinite ease-in-out;
 }
+
+/* Obsidian Dark Leaflet Map Tiles */
+.leaflet-dark-tiles .leaflet-tile-pane {
+  filter: brightness(0.65) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7);
+}
+
+.leaflet-container {
+  background-color: #0a0d14 !important;
+  font-family: inherit;
+}

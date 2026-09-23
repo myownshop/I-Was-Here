@@ -30,6 +30,14 @@ export interface UserProfile {
   createdAt: string;
 }
 
+export interface TimeBlock {
+  id: string;
+  code: string; // e.g. "X12" (uppercase short code)
+  startTime: string; // "08:00" (HH:mm 24-hr format)
+  endTime: string; // "08:30" (HH:mm 24-hr format)
+  label?: string; // e.g. "Early Arrival", "General Session"
+}
+
 export interface Campaign {
   id: string;
   orgId: string;
@@ -39,6 +47,7 @@ export interface Campaign {
   targetLongitude: number;
   allowedRadius: number; // in meters (e.g. 50, 100, 200)
   shortCode: string; // 5 alphanumeric characters, e.g. xyz12
+  timeBlocks?: TimeBlock[];
   createdAt: string;
 }
 
@@ -56,6 +65,10 @@ export interface Attendee {
   timestamp: string;
   verified: boolean;
   isOfflineSync?: boolean;
+  timeBlockCode?: string;
+  tampered?: boolean;
+  attendanceStatus?: 'present' | 'late' | 'flagged';
+  validationNotes?: string;
 }
 
 export interface ShortLink {
@@ -88,6 +101,8 @@ export interface AttendanceSubmissionPayload {
   longitude: number;
   distanceMeters: number;
   loggedIp: string;
+  timeBlockCode?: string;
+  tampered?: boolean;
 }
 
 export interface AttendanceResult {
@@ -112,6 +127,8 @@ export interface OfflineAttendanceRecord {
   distanceMeters: number;
   base64Image: string;
   version: string;
+  timeBlockCode?: string;
+  tampered?: boolean;
 }
 
 export interface EncryptedIwhFile {

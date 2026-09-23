@@ -220,6 +220,14 @@ export default function App() {
     handleViewChange('portal');
   };
 
+  const handleCampaignLoaded = useCallback((camp: Campaign) => {
+    setActiveCampaign(camp);
+  }, []);
+
+  const handleBackToHome = useCallback(() => {
+    handleViewChange('home');
+  }, [handleViewChange]);
+
   const accentColor = currentOrg?.accentColor || '#00FF66';
 
   return (
@@ -260,8 +268,8 @@ export default function App() {
           <AttendanceForm
             initialCampaignId={targetCampaignId}
             initialShortCode={targetShortCode}
-            onCampaignLoaded={(camp) => setActiveCampaign(camp)}
-            onBackToHome={() => handleViewChange('home')}
+            onCampaignLoaded={handleCampaignLoaded}
+            onBackToHome={handleBackToHome}
           />
         ) : view === 'auth' ? (
           <AuthPage

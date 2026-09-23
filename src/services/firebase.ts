@@ -12,6 +12,7 @@ import {
 } from 'firebase/auth';
 import {
   getFirestore,
+  initializeFirestore,
   doc,
   getDoc,
   setDoc,
@@ -38,8 +39,21 @@ import { calculateHaversineDistance } from '../utils/geo';
 // Initialize Firebase App
 const app = initializeApp(firebaseConfig);
 
-// CRITICAL: Must pass firestoreDatabaseId according to Firebase integration guidelines
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// CRITICAL: Initialize Firestore with experimentalForceLongPolling for robust connection in iframe/proxy environments
+let firestoreDb;
+try {
+  firestoreDb = initializeFirestore(
+    app,
+    {
+      experimentalForceLongPolling: true,
+    },
+    firebaseConfig.firestoreDatabaseId
+  );
+} catch {
+  firestoreDb = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+}
+
+export const db = firestoreDb;
 export const auth = getAuth(app);
 export const storage = getStorage(app);
 export const googleProvider = new GoogleAuthProvider();
@@ -155,18 +169,49 @@ export async function createOrganization(
   return newOrg;
 }
 
+// Helper to prevent Firestore getDoc/getDocs from hanging indefinitely on cold connections
+async function withTimeout<T>(promise: Promise<T>, timeoutMs = 2500): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`Firestore query timeout of ${timeoutMs}ms exceeded`)), timeoutMs)
+    ),
+  ]);
+}
+
 export async function getOrganization(orgId: string): Promise<Organization | null> {
+  // 1. Fast local cache lookup (0ms)
+  const cached = getLocalCache<Organization>(LOCAL_ORGS_KEY, []);
+  const localOrg = cached.find((o) => o.id === orgId);
+  if (localOrg) {
+    // Background refresh
+    withTimeout(getDoc(doc(db, 'organizations', orgId)), 2000)
+      .then((snap) => {
+        if (snap && snap.exists()) {
+          const freshOrg = snap.data() as Organization;
+          setLocalCache(LOCAL_ORGS_KEY, [
+            freshOrg,
+            ...cached.filter((o) => o.id !== orgId),
+          ]);
+        }
+      })
+      .catch(() => {});
+    return localOrg;
+  }
+
+  // 2. Network lookup with timeout
   try {
-    const snap = await getDoc(doc(db, 'organizations', orgId));
+    const snap = await withTimeout(getDoc(doc(db, 'organizations', orgId)), 2500);
     if (snap.exists()) {
-      return snap.data() as Organization;
+      const org = snap.data() as Organization;
+      setLocalCache(LOCAL_ORGS_KEY, [org, ...cached]);
+      return org;
     }
   } catch (err) {
     console.warn(`Firestore get org ${orgId} error, checking local:`, err);
   }
 
-  const cached = getLocalCache<Organization>(LOCAL_ORGS_KEY, []);
-  return cached.find((o) => o.id === orgId) || null;
+  return null;
 }
 
 export async function updateOrganization(
@@ -375,6 +420,7 @@ export async function createCampaign(
       targetLongitude: fullCampaign.targetLongitude,
       allowedRadius: fullCampaign.allowedRadius,
       shortCode: fullCampaign.shortCode,
+      timeBlocks: fullCampaign.timeBlocks || [],
       createdAt: fullCampaign.createdAt,
     });
 
@@ -398,11 +444,43 @@ export async function createCampaign(
 }
 
 export async function getCampaignById(campaignId: string): Promise<Campaign | null> {
+  // 1. Fast local cache lookup (0ms)
+  const cached = getLocalCache<Campaign>(LOCAL_CAMPAIGNS_KEY, []);
+  const localMatch = cached.find((c) => c.id === campaignId);
+  if (localMatch) {
+    // Non-blocking background sync
+    withTimeout(getDoc(doc(db, 'campaigns', campaignId)), 2000)
+      .then((snap) => {
+        if (snap && snap.exists()) {
+          const data = snap.data();
+          const refreshed: Campaign = {
+            id: snap.id,
+            orgId: data.orgId || '',
+            name: data.name,
+            date: data.date,
+            targetLatitude: Number(data.targetLatitude),
+            targetLongitude: Number(data.targetLongitude),
+            allowedRadius: Number(data.allowedRadius),
+            shortCode: data.shortCode,
+            timeBlocks: data.timeBlocks || [],
+            createdAt: data.createdAt,
+          };
+          setLocalCache(LOCAL_CAMPAIGNS_KEY, [
+            refreshed,
+            ...cached.filter((c) => c.id !== campaignId),
+          ]);
+        }
+      })
+      .catch(() => {});
+    return localMatch;
+  }
+
+  // 2. Network lookup with timeout
   try {
-    const snap = await getDoc(doc(db, 'campaigns', campaignId));
+    const snap = await withTimeout(getDoc(doc(db, 'campaigns', campaignId)), 2500);
     if (snap.exists()) {
       const data = snap.data();
-      return {
+      const campaign: Campaign = {
         id: snap.id,
         orgId: data.orgId || '',
         name: data.name,
@@ -411,35 +489,75 @@ export async function getCampaignById(campaignId: string): Promise<Campaign | nu
         targetLongitude: Number(data.targetLongitude),
         allowedRadius: Number(data.allowedRadius),
         shortCode: data.shortCode,
+        timeBlocks: data.timeBlocks || [],
         createdAt: data.createdAt,
       };
+      setLocalCache(LOCAL_CAMPAIGNS_KEY, [campaign, ...cached]);
+      return campaign;
     }
   } catch (error) {
     console.warn(`Firestore get campaign ${campaignId} error:`, error);
   }
 
-  const cached = getLocalCache<Campaign>(LOCAL_CAMPAIGNS_KEY, []);
-  return cached.find((c) => c.id === campaignId) || null;
+  return null;
 }
 
 export async function resolveShortCode(rawCode: string): Promise<Campaign | null> {
   const shortCode = rawCode.trim().toLowerCase();
+
+  // 1. Fast local cache check first (0ms)
+  const cachedLinks = getLocalCache<ShortLink>(LOCAL_SHORTLINKS_KEY, []);
+  const link = cachedLinks.find((l) => l.shortCode.toLowerCase() === shortCode);
+  if (link && link.campaignId) {
+    const cachedCampaigns = getLocalCache<Campaign>(LOCAL_CAMPAIGNS_KEY, []);
+    const match = cachedCampaigns.find((c) => c.id === link.campaignId);
+    if (match) return match;
+  }
+
+  const cachedCampaigns = getLocalCache<Campaign>(LOCAL_CAMPAIGNS_KEY, []);
+  const directMatch = cachedCampaigns.find(
+    (c) => c.shortCode?.toLowerCase() === shortCode || c.id === rawCode
+  );
+  if (directMatch) return directMatch;
+
+  // 2. Query short_links collection with timeout
   try {
-    const snap = await getDoc(doc(db, 'short_links', shortCode));
+    const snap = await withTimeout(getDoc(doc(db, 'short_links', shortCode)), 2500);
     if (snap.exists()) {
       const linkData = snap.data() as ShortLink;
       if (linkData.campaignId) {
-        return await getCampaignById(linkData.campaignId);
+        const camp = await getCampaignById(linkData.campaignId);
+        if (camp) return camp;
       }
     }
   } catch (error) {
     console.warn(`Firestore short code lookup error:`, error);
   }
 
-  const cachedLinks = getLocalCache<ShortLink>(LOCAL_SHORTLINKS_KEY, []);
-  const link = cachedLinks.find((l) => l.shortCode.toLowerCase() === shortCode);
-  if (link) {
-    return await getCampaignById(link.campaignId);
+  // 3. Query campaigns collection directly with timeout
+  try {
+    const q = query(collection(db, 'campaigns'), where('shortCode', '==', shortCode));
+    const snap = await withTimeout(getDocs(q), 2500);
+    if (!snap.empty) {
+      const docSnap = snap.docs[0];
+      const data = docSnap.data();
+      const campaign: Campaign = {
+        id: docSnap.id,
+        orgId: data.orgId || '',
+        name: data.name,
+        date: data.date,
+        targetLatitude: Number(data.targetLatitude),
+        targetLongitude: Number(data.targetLongitude),
+        allowedRadius: Number(data.allowedRadius),
+        shortCode: data.shortCode,
+        timeBlocks: data.timeBlocks || [],
+        createdAt: data.createdAt,
+      };
+      setLocalCache(LOCAL_CAMPAIGNS_KEY, [campaign, ...cachedCampaigns]);
+      return campaign;
+    }
+  } catch (error) {
+    console.warn('Firestore campaign query by shortCode error:', error);
   }
 
   return null;
@@ -619,6 +737,9 @@ export async function submitAttendance(payload: AttendanceSubmissionPayload): Pr
     payload.photoDataUrl
   );
 
+  const isTampered = Boolean(payload.tampered);
+  const timeBlockCode = payload.timeBlockCode?.trim().toUpperCase() || undefined;
+
   const newAttendee: Attendee = {
     id: attendeeId,
     campaignId: payload.campaignId,
@@ -632,6 +753,9 @@ export async function submitAttendance(payload: AttendanceSubmissionPayload): Pr
     distanceMeters: payload.distanceMeters,
     timestamp,
     verified: true,
+    timeBlockCode,
+    tampered: isTampered,
+    attendanceStatus: isTampered ? 'flagged' : 'present',
   };
 
   try {
@@ -647,6 +771,9 @@ export async function submitAttendance(payload: AttendanceSubmissionPayload): Pr
       distanceMeters: newAttendee.distanceMeters,
       timestamp: newAttendee.timestamp,
       verified: true,
+      timeBlockCode: newAttendee.timeBlockCode || null,
+      tampered: isTampered,
+      attendanceStatus: newAttendee.attendanceStatus,
     });
   } catch (error) {
     console.warn(`Firestore save attendee failed, updating local fallback:`, error);
@@ -684,6 +811,10 @@ export async function getCampaignAttendees(campaignId: string): Promise<Attendee
         timestamp: data.timestamp,
         verified: Boolean(data.verified),
         isOfflineSync: Boolean(data.isOfflineSync),
+        tampered: Boolean(data.tampered),
+        timeBlockCode: data.timeBlockCode || undefined,
+        attendanceStatus: data.attendanceStatus || (data.tampered ? 'flagged' : 'present'),
+        validationNotes: data.validationNotes || undefined,
       });
     });
   } catch (error) {
@@ -702,7 +833,7 @@ export async function getCampaignAttendees(campaignId: string): Promise<Attendee
 export async function importOfflineIwhRecord(
   record: OfflineAttendanceRecord,
   campaign: Campaign
-): Promise<{ success: boolean; attendee: Attendee; distanceMeters: number; message: string }> {
+): Promise<{ success: boolean; attendee: Attendee; distanceMeters: number; message: string; isTampered: boolean; isLate: boolean }> {
   // 1. Recalculate distance using ground-truth campaign coordinates
   const verifiedDistance = calculateHaversineDistance(
     record.latitude,
@@ -725,6 +856,67 @@ export async function importOfflineIwhRecord(
     throw new Error(`Duplicate entry: ${record.stateCode} already registered attendance for this date.`);
   }
 
+  // 3. Anti-Tampering Validation
+  const isTampered = Boolean(record.tampered);
+  let attendanceStatus: 'present' | 'late' | 'flagged' = isTampered ? 'flagged' : 'present';
+  const notesList: string[] = [];
+
+  if (isTampered) {
+    notesList.push('Clock Manipulated: System clock mismatch detected by hardware anti-tampering engine.');
+  }
+
+  // 4. Time-Block Validation
+  let isLate = false;
+  if (campaign.timeBlocks && campaign.timeBlocks.length > 0) {
+    const matchingBlock = record.timeBlockCode
+      ? campaign.timeBlocks.find((b) => b.code.toUpperCase() === record.timeBlockCode?.trim().toUpperCase())
+      : undefined;
+
+    const timeStr = record.timestamp.split('T')[1]?.substring(0, 5) || '00:00';
+    const [hours, mins] = timeStr.split(':').map(Number);
+    const submissionMinutes = hours * 60 + mins;
+
+    if (matchingBlock) {
+      const [endH, endM] = matchingBlock.endTime.split(':').map(Number);
+      const endLimitMinutes = endH * 60 + endM + 5; // 5-minute grace period
+
+      const [startH, startM] = matchingBlock.startTime.split(':').map(Number);
+      const startLimitMinutes = startH * 60 + startM - 5;
+
+      if (submissionMinutes > endLimitMinutes || submissionMinutes < startLimitMinutes) {
+        isLate = true;
+        if (!isTampered) attendanceStatus = 'late';
+        notesList.push(`Late Submission: Window ${matchingBlock.code} ended at ${matchingBlock.endTime}, logged at ${timeStr}.`);
+      }
+    } else if (record.timeBlockCode) {
+      isLate = true;
+      if (!isTampered) attendanceStatus = 'late';
+      notesList.push(`Unrecognized Time-Block Code: ${record.timeBlockCode}.`);
+    }
+  }
+
+  const validationNotes = notesList.length > 0 ? notesList.join(' | ') : undefined;
+
+  // 5. Upload facial verification photo to Firebase Storage
+  let photoUrl = record.base64Image;
+  try {
+    if (record.base64Image && record.base64Image.startsWith('data:')) {
+      const parts = record.base64Image.split(';base64,');
+      if (parts.length === 2) {
+        const byteCharacters = atob(parts[1]);
+        const arrayBuffer = new ArrayBuffer(byteCharacters.length);
+        const uint8Array = new Uint8Array(arrayBuffer);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          uint8Array[i] = byteCharacters.charCodeAt(i);
+        }
+        const blob = new Blob([arrayBuffer], { type: 'image/jpeg' });
+        photoUrl = await uploadAttendeeImage(campaign.id, record.stateCode, blob, record.base64Image);
+      }
+    }
+  } catch (err) {
+    console.warn('Storage image upload failed during offline import, falling back to data URL:', err);
+  }
+
   const attendeeId = `att_offline_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
   const importedAttendee: Attendee = {
     id: attendeeId,
@@ -732,14 +924,18 @@ export async function importOfflineIwhRecord(
     orgId: campaign.orgId,
     name: record.name.trim(),
     stateCode: record.stateCode.trim().toUpperCase(),
-    photoUrl: record.base64Image,
-    loggedIp: 'Offline Device Sync',
+    photoUrl,
+    loggedIp: 'Offline .IWH Importer',
     latitude: record.latitude,
     longitude: record.longitude,
     distanceMeters: Math.round(verifiedDistance),
     timestamp: record.timestamp,
     verified: true,
     isOfflineSync: true,
+    timeBlockCode: record.timeBlockCode?.trim().toUpperCase(),
+    tampered: isTampered,
+    attendanceStatus,
+    validationNotes,
   };
 
   try {
@@ -756,6 +952,11 @@ export async function importOfflineIwhRecord(
       timestamp: importedAttendee.timestamp,
       verified: true,
       isOfflineSync: true,
+      timeBlockCode: importedAttendee.timeBlockCode || null,
+      tampered: isTampered,
+      attendanceStatus,
+      validationNotes: validationNotes || null,
+      importedAt: new Date().toISOString(),
     });
   } catch (err) {
     console.warn('Firestore offline sync write failed, cached locally:', err);
@@ -764,11 +965,22 @@ export async function importOfflineIwhRecord(
   const cached = getLocalCache<Attendee>(LOCAL_ATTENDEES_KEY, []);
   setLocalCache(LOCAL_ATTENDEES_KEY, [importedAttendee, ...cached]);
 
+  let statusMsg = `Verified and imported ${importedAttendee.stateCode}`;
+  if (isTampered) {
+    statusMsg += ` [⚠️ CLOCK MANIPULATED]`;
+  } else if (isLate) {
+    statusMsg += ` [⏱️ LATE]`;
+  } else {
+    statusMsg += ` (${Math.round(verifiedDistance)}m from venue)`;
+  }
+
   return {
     success: true,
     attendee: importedAttendee,
     distanceMeters: Math.round(verifiedDistance),
-    message: `Verified and imported ${importedAttendee.stateCode} (${Math.round(verifiedDistance)}m from venue).`,
+    message: statusMsg,
+    isTampered,
+    isLate,
   };
 }
 

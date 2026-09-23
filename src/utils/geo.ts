@@ -130,3 +130,76 @@ export async function getCurrentCoordinates(): Promise<GeoLocationCoordinates> {
     );
   });
 }
+
+/**
+ * Computes initial compass bearing from point 1 (user) to point 2 (venue destination).
+ * Returns bearing in degrees (0-360) and 8-point cardinal abbreviation.
+ */
+export function calculateBearing(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): { degrees: number; cardinal: string; label: string } {
+  const toRadians = (deg: number) => (deg * Math.PI) / 180;
+  const toDegrees = (rad: number) => (rad * 180) / Math.PI;
+
+  const phi1 = toRadians(lat1);
+  const phi2 = toRadians(lat2);
+  const deltaLambda = toRadians(lon2 - lon1);
+
+  const y = Math.sin(deltaLambda) * Math.cos(phi2);
+  const x =
+    Math.cos(phi1) * Math.sin(phi2) -
+    Math.sin(phi1) * Math.cos(phi2) * Math.cos(deltaLambda);
+
+  let bearing = (toDegrees(Math.atan2(y, x)) + 360) % 360;
+  bearing = Math.round(bearing);
+
+  const cardinals = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW', 'N'];
+  const index = Math.round(bearing / 45);
+  const cardinal = cardinals[index % 8];
+
+  const cardinalNames: Record<string, string> = {
+    N: 'North',
+    NE: 'North-East',
+    E: 'East',
+    SE: 'South-East',
+    S: 'South',
+    SW: 'South-West',
+    W: 'West',
+    NW: 'North-West',
+  };
+
+  return {
+    degrees: bearing,
+    cardinal,
+    label: cardinalNames[cardinal] || cardinal,
+  };
+}
+
+/**
+ * Returns a universal navigation URL for Google Maps routing.
+ */
+export function getGoogleMapsNavigationUrl(
+  destLat: number,
+  destLng: number,
+  venueName?: string
+): string {
+  const query = venueName
+    ? encodeURIComponent(`${destLat},${destLng} (${venueName})`)
+    : `${destLat},${destLng}`;
+  return `https://www.google.com/maps/dir/?api=1&destination=${query}&travelmode=walking`;
+}
+
+/**
+ * Returns Apple Maps navigation URL for iOS devices.
+ */
+export function getAppleMapsUrl(
+  destLat: number,
+  destLng: number,
+  venueName?: string
+): string {
+  const q = venueName ? encodeURIComponent(venueName) : 'CDS Venue';
+  return `https://maps.apple.com/?daddr=${destLat},${destLng}&q=${q}&dirflg=w`;
+}

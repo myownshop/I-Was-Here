@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   ShieldCheck,
   ArrowRight,
@@ -29,6 +29,7 @@ import { formatStateCodeInput, isValidStateCode, getClientIpAddress } from '../.
 import { formatDistance } from '../../utils/geo';
 import { encryptOfflineRecord, downloadIwhFile } from '../../utils/crypto';
 import { serializeAndStoreAttendance } from '../../utils/indexedDB';
+import { isTamperingDetected } from '../../utils/antiTampering';
 import {
   getCampaignById,
   resolveShortCode,
@@ -53,7 +54,9 @@ export function AttendanceForm({
   // Campaign & Org State
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [organization, setOrganization] = useState<Organization | null>(null);
-  const [campaignLoading, setCampaignLoading] = useState<boolean>(true);
+  const [campaignLoading, setCampaignLoading] = useState<boolean>(
+    Boolean(initialCampaignId || initialShortCode)
+  );
   const [campaignError, setCampaignError] = useState<string | null>(null);
 
   // Manual Short code fallback input
@@ -63,6 +66,7 @@ export function AttendanceForm({
   // Form inputs
   const [name, setName] = useState<string>('');
   const [stateCode, setStateCode] = useState<string>('');
+  const [timeBlockCode, setTimeBlockCode] = useState<string>('');
   const [nameError, setNameError] = useState<string>('');
   const [stateCodeError, setStateCodeError] = useState<string>('');
 
@@ -88,11 +92,24 @@ export function AttendanceForm({
   // Accent color from organization
   const accentColor = organization?.accentColor || '#00FF66';
 
+  // Keep onCampaignLoaded in a ref so its reference changes do not trigger re-fetches
+  const onCampaignLoadedRef = useRef(onCampaignLoaded);
+  useEffect(() => {
+    onCampaignLoadedRef.current = onCampaignLoaded;
+  }, [onCampaignLoaded]);
+
   // Resolve Campaign on mount or prop change
   useEffect(() => {
     let isCancelled = false;
 
     async function loadCampaign() {
+      if (!initialShortCode && !initialCampaignId) {
+        setCampaign(null);
+        setCampaignLoading(false);
+        setCampaignError(null);
+        return;
+      }
+
       setCampaignLoading(true);
       setCampaignError(null);
 
@@ -108,24 +125,26 @@ export function AttendanceForm({
         if (!isCancelled) {
           if (loaded) {
             setCampaign(loaded);
-            if (onCampaignLoaded) onCampaignLoaded(loaded);
+            onCampaignLoadedRef.current?.(loaded);
 
-            // Fetch organization details for dynamic branding
+            // Fetch organization details asynchronously without blocking UI
             if (loaded.orgId) {
-              const org = await getOrganization(loaded.orgId);
-              if (org) setOrganization(org);
+              getOrganization(loaded.orgId)
+                .then((org) => {
+                  if (org && !isCancelled) setOrganization(org);
+                })
+                .catch(() => {});
             }
-          } else if (initialShortCode || initialCampaignId) {
-            setCampaignError('Attendance session not found. Please check your link or short code.');
           } else {
             setCampaign(null);
-            setCampaignError(null);
+            setCampaignError('Session not found. Please check your link or enter a valid session code.');
           }
         }
       } catch (err) {
         if (!isCancelled) {
           console.error('Campaign load error:', err);
-          setCampaignError('Failed to load attendance campaign.');
+          setCampaign(null);
+          setCampaignError('Session not found or network offline. Please enter your session code manually.');
         }
       } finally {
         if (!isCancelled) setCampaignLoading(false);
@@ -137,7 +156,7 @@ export function AttendanceForm({
     return () => {
       isCancelled = true;
     };
-  }, [initialCampaignId, initialShortCode, onCampaignLoaded]);
+  }, [initialCampaignId, initialShortCode]);
 
   // Handle manual short code lookup
   const handleResolveManualShortCode = async (e: React.FormEvent) => {
@@ -151,7 +170,7 @@ export function AttendanceForm({
       const found = await resolveShortCode(shortCodeInput);
       if (found) {
         setCampaign(found);
-        if (onCampaignLoaded) onCampaignLoaded(found);
+        onCampaignLoadedRef.current?.(found);
         if (found.orgId) {
           const org = await getOrganization(found.orgId);
           if (org) setOrganization(org);
@@ -190,16 +209,20 @@ export function AttendanceForm({
     }
   };
 
-  // Location update from Geofence status
-  const handleLocationUpdate = (
-    coords: GeoLocationCoordinates,
-    distanceMeters: number,
-    within: boolean
-  ) => {
-    setCurrentCoords(coords);
-    setCurrentDistance(distanceMeters);
-    setIsWithinGeofence(within);
-  };
+  // Location update from Geofence status (memoized to prevent render cascading)
+  const handleLocationUpdate = useCallback(
+    (coords: GeoLocationCoordinates, distanceMeters: number, within: boolean) => {
+      setCurrentCoords(coords);
+      setCurrentDistance(distanceMeters);
+      setIsWithinGeofence(within);
+    },
+    []
+  );
+
+  const handleFaceCapture = useCallback((result: CompressionResult) => {
+    setCapturedPhoto(result);
+    showToast('success', 'Face captured and compressed for submission.', 'Face Verified');
+  }, []);
 
   // Submission handler with dual routing (Online vs. Offline .iwh)
   const handleSubmit = async (e: React.FormEvent) => {
@@ -249,6 +272,8 @@ export function AttendanceForm({
     const timestamp = new Date().toISOString();
     const lat = currentCoords ? currentCoords.latitude : campaign.targetLatitude;
     const lng = currentCoords ? currentCoords.longitude : campaign.targetLongitude;
+    const isTampered = isTamperingDetected();
+    const cleanTimeBlock = timeBlockCode.trim().toUpperCase();
 
     // === OFFLINE ROUTING ===
     if (shouldSubmitOffline) {
@@ -271,6 +296,7 @@ export function AttendanceForm({
         const offlineRecord: OfflineAttendanceRecord = {
           name: name.trim(),
           stateCode: stateCode.trim().toUpperCase(),
+          timeBlockCode: cleanTimeBlock || undefined,
           campaignId: campaign.id,
           orgId: campaign.orgId || organization?.id || '',
           timestamp,
@@ -279,6 +305,7 @@ export function AttendanceForm({
           distanceMeters: currentDistance,
           base64Image: capturedPhoto.dataUrl,
           version: '1.0',
+          tampered: isTampered,
         };
 
         const encrypted = await encryptOfflineRecord(offlineRecord);
@@ -298,6 +325,8 @@ export function AttendanceForm({
           timestamp,
           verified: true,
           isOfflineSync: true,
+          timeBlockCode: cleanTimeBlock || undefined,
+          tampered: isTampered,
         };
 
         setIsOfflinePackage(true);
@@ -351,6 +380,8 @@ export function AttendanceForm({
         longitude: lng,
         distanceMeters: currentDistance,
         loggedIp: clientIp,
+        timeBlockCode: cleanTimeBlock || undefined,
+        tampered: isTampered,
       });
 
       setIsOfflinePackage(false);
@@ -376,6 +407,7 @@ export function AttendanceForm({
         const fallbackRecord: OfflineAttendanceRecord = {
           name: name.trim(),
           stateCode: stateCode.trim().toUpperCase(),
+          timeBlockCode: cleanTimeBlock || undefined,
           campaignId: campaign.id,
           orgId: campaign.orgId || '',
           timestamp,
@@ -384,6 +416,7 @@ export function AttendanceForm({
           distanceMeters: currentDistance,
           base64Image: capturedPhoto.dataUrl,
           version: '1.0',
+          tampered: isTampered,
         };
         const encrypted = await encryptOfflineRecord(fallbackRecord);
         const downloadedName = downloadIwhFile(encrypted);
@@ -401,6 +434,8 @@ export function AttendanceForm({
           timestamp,
           verified: true,
           isOfflineSync: true,
+          timeBlockCode: cleanTimeBlock || undefined,
+          tampered: isTampered,
         };
 
         setIsOfflinePackage(true);
@@ -425,6 +460,7 @@ export function AttendanceForm({
     setOfflineFilename('');
     setName('');
     setStateCode('');
+    setTimeBlockCode('');
     setCapturedPhoto(null);
     setNameError('');
     setStateCodeError('');
@@ -575,6 +611,22 @@ export function AttendanceForm({
               error={nameError}
               autoComplete="name"
             />
+
+            {/* Time-Block Code Input */}
+            <FloatingInput
+              id="input-time-block-code"
+              label="Time-Block Code"
+              value={timeBlockCode}
+              onChange={(e) => setTimeBlockCode(e.target.value.toUpperCase())}
+              hint={
+                campaign.timeBlocks && campaign.timeBlocks.length > 0
+                  ? `Active Windows: ${campaign.timeBlocks.map((b) => `${b.code} (${b.startTime}-${b.endTime})`).join(', ')}`
+                  : 'Assigned session code (e.g. X12)'
+              }
+              isMono
+              maxLength={6}
+              autoComplete="off"
+            />
           </div>
 
           {/* Section 2: Real-time Geofence Verification */}
@@ -587,12 +639,13 @@ export function AttendanceForm({
                 2
               </span>
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                GPS Presence Verification
+                GPS Presence Verification & Navigation
               </h3>
             </div>
 
             <GeofenceStatus
               campaign={campaign}
+              accentColor={accentColor}
               onLocationUpdate={handleLocationUpdate}
             />
           </div>
@@ -621,10 +674,7 @@ export function AttendanceForm({
             </div>
 
             <CameraViewfinder
-              onCapture={(result) => {
-                setCapturedPhoto(result);
-                showToast('success', 'Face captured and compressed for submission.', 'Face Verified');
-              }}
+              onCapture={handleFaceCapture}
               disabled={!isWithinGeofence}
             />
           </div>
