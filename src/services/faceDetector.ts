@@ -5,6 +5,8 @@
  * across varied lighting (indoor, fluorescent, daylight, backlight).
  */
 
+import { globalLivenessTracker, LivenessState } from './livenessEngine';
+
 export interface FaceDetectionResult {
   detected: boolean;
   confidence: number;
@@ -15,6 +17,10 @@ export interface FaceDetectionResult {
     height: number;
   };
   message: string;
+  isLive?: boolean;
+  livenessScore?: number;
+  livenessStep?: 'ALIGN_FACE' | 'PERFORM_LIVENESS' | 'LIVENESS_PASSED';
+  livenessPrompt?: string;
 }
 
 // Interface for native Chromium/Android FaceDetector API
@@ -124,7 +130,15 @@ export function analyzeFrameDirectly(
 
   const skinRatio = totalSampled > 0 ? skinPixelCount / totalSampled : 0;
   // Lenient, robust threshold for centered face
-  const isFaceDetected = skinRatio >= 0.15;
+  const isFaceDetected = skinRatio >= 0.14;
+
+  const liveness = globalLivenessTracker.evaluateFrame(
+    imageData,
+    width,
+    height,
+    skinRatio,
+    isFaceDetected
+  );
 
   if (isFaceDetected) {
     const rawBoxW = Math.max(width * 0.4, maxX - minX);
@@ -132,33 +146,31 @@ export function analyzeFrameDirectly(
     const boxX = Math.max(0, Math.min(width - rawBoxW, (minX + maxX) / 2 - rawBoxW / 2));
     const boxY = Math.max(0, Math.min(height - rawBoxH, (minY + maxY) / 2 - rawBoxH / 2));
 
-    const confidence = Math.min(0.99, Math.max(0.78, 0.72 + skinRatio * 0.32));
-
     return {
       detected: true,
-      confidence,
+      confidence: liveness.confidence / 100,
       boundingBox: {
         x: boxX,
         y: boxY,
         width: rawBoxW,
         height: rawBoxH,
       },
-      message: 'AI Face & Liveness Verified. Ready to capture.',
-    };
-  }
-
-  if (skinRatio > 0.06) {
-    return {
-      detected: false,
-      confidence: 0.45,
-      message: 'Center your face within the green oval reticle.',
+      message: liveness.prompt,
+      isLive: liveness.isLive,
+      livenessScore: liveness.livenessScore,
+      livenessStep: liveness.step,
+      livenessPrompt: liveness.prompt,
     };
   }
 
   return {
     detected: false,
-    confidence: 0.1,
-    message: 'Looking for face... Align with the camera.',
+    confidence: skinRatio > 0.05 ? 0.4 : 0.1,
+    message: liveness.prompt,
+    isLive: false,
+    livenessScore: 0,
+    livenessStep: 'ALIGN_FACE',
+    livenessPrompt: liveness.prompt,
   };
 }
 

@@ -6,19 +6,14 @@ import {
   AlertCircle,
   Sparkles,
   SwitchCamera,
-  Upload,
-  Image as ImageIcon,
+  ShieldCheck,
+  Eye,
   Zap,
 } from 'lucide-react';
 import {
   detectFaceInVideoFrame,
-  detectFaceInImageSource,
   FaceDetectionResult,
 } from '../../services/faceDetector';
-import {
-  faceDetectorWorkerManager,
-  DetectorWorkerStatus,
-} from '../../services/faceDetectionWorkerManager';
 import { compressFacialImage, CompressionResult } from '../../utils/imageCompression';
 
 interface CameraViewfinderProps {
@@ -30,23 +25,20 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [inputMode, setInputMode] = useState<'camera' | 'upload'>('camera');
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [permissionState, setPermissionState] = useState<'prompt' | 'granted' | 'denied' | 'no_device' | 'error'>('prompt');
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [detection, setDetection] = useState<FaceDetectionResult>({
     detected: false,
     confidence: 0,
-    message: 'Initializing camera...',
+    message: 'Align face in oval reticle...',
+    isLive: false,
+    livenessScore: 0,
+    livenessStep: 'ALIGN_FACE',
   });
   const [isCapturing, setIsCapturing] = useState<boolean>(false);
-  const [isProcessingFile, setIsProcessingFile] = useState<boolean>(false);
-  const [isDragging, setIsDragging] = useState<boolean>(false);
   const [capturedPreview, setCapturedPreview] = useState<CompressionResult | null>(null);
-
-  // AI Detector is active by default
   const [isSimplifiedMode, setIsSimplifiedMode] = useState<boolean>(false);
 
   // Helper to attach stream to video element safely
@@ -74,7 +66,7 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
 
       if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
         setPermissionState('no_device');
-        setErrorMessage('Camera is not supported on this browser or platform. You can upload a photo instead.');
+        setErrorMessage('Camera access is not supported on this device/browser.');
         return;
       }
 
@@ -147,13 +139,13 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
         console.warn('Camera access denied:', errMsg);
         setPermissionState('denied');
         setErrorMessage(
-          'Camera permission was blocked. Please grant camera permission in your browser URL bar or use Photo Upload.'
+          'Camera access was blocked by your browser. Please tap the camera/lock icon in your URL bar to allow camera access, then tap Retry Camera.'
         );
       } else if (isNoDevice) {
         console.info('No camera device found:', errMsg);
         setPermissionState('no_device');
         setErrorMessage(
-          'No camera hardware was detected on this device. You can switch to Upload Photo to proceed.'
+          'No physical camera hardware was detected on this device.'
         );
       } else {
         console.warn('Camera initialization notice:', errMsg);
@@ -163,22 +155,17 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
     }
   }, [attachStreamToVideo]);
 
-  // Handle camera start/stop lifecycle purely on mode/facingMode changes
+  // Handle camera start/stop lifecycle purely on facingMode changes
   useEffect(() => {
-    let isActive = true;
-
-    if (inputMode === 'camera') {
-      startCamera(facingMode);
-    }
+    startCamera(facingMode);
 
     return () => {
-      isActive = false;
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
       }
     };
-  }, [facingMode, inputMode, startCamera]);
+  }, [facingMode, startCamera]);
 
   // Video Ref callback to guarantee srcObject attachment even if DOM mounts later
   const setVideoElementRef = useCallback((el: HTMLVideoElement | null) => {
@@ -188,9 +175,9 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
     }
   }, [attachStreamToVideo]);
 
-  // Face Detection Loop for Live Video (Runs smoothly every ~120ms)
+  // Face Detection & Anti-Spoof Liveness Loop for Live Video (Runs smoothly every ~120ms)
   useEffect(() => {
-    if (inputMode !== 'camera' || permissionState !== 'granted' || capturedPreview || isCapturing) {
+    if (permissionState !== 'granted' || capturedPreview || isCapturing) {
       return;
     }
 
@@ -225,9 +212,9 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
       isSubscribed = false;
       clearTimeout(timerId);
     };
-  }, [permissionState, capturedPreview, isCapturing, inputMode]);
+  }, [permissionState, capturedPreview, isCapturing]);
 
-  // Capture face from live camera - Never blocked if video is ready
+  // Capture face from live camera
   const handleCapture = async () => {
     if (!videoRef.current || isCapturing) return;
 
@@ -248,101 +235,23 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
     }
   };
 
-  // Process an image data URL (from file upload or sample portrait)
-  const processImageDataUrl = useCallback(
-    async (dataUrl: string) => {
-      setIsProcessingFile(true);
-      try {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-
-        await new Promise<void>((resolve, reject) => {
-          img.onload = () => resolve();
-          img.onerror = () => reject(new Error('Failed to load image file.'));
-          img.src = dataUrl;
-        });
-
-        // Run face detection on image
-        if (canvasRef.current) {
-          const detRes = await detectFaceInImageSource(img, canvasRef.current);
-          setDetection(detRes);
-        }
-
-        // Compress image to bandwidth-efficient format
-        const compressionResult = await compressFacialImage(img, {
-          maxWidth: 360,
-          maxHeight: 360,
-          quality: 0.75,
-        });
-
-        setCapturedPreview(compressionResult);
-        onCapture(compressionResult);
-      } catch (err) {
-        console.error('Error processing uploaded image:', err);
-        setErrorMessage('Failed to process image. Please try another clear portrait photo.');
-      } finally {
-        setIsProcessingFile(false);
-      }
-    },
-    [onCapture]
-  );
-
-  // File Upload Handlers (Supports both drag-and-drop & manual click)
-  const handleFile = (file: File) => {
-    if (!file.type.startsWith('image/')) {
-      setErrorMessage('Please select a valid image file (JPEG, PNG, or WebP).');
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const dataUrl = e.target?.result as string;
-      if (dataUrl) {
-        processImageDataUrl(dataUrl);
-      }
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      handleFile(e.dataTransfer.files[0]);
-    }
-  };
-
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragging(false);
-  };
-
-  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      handleFile(e.target.files[0]);
-    }
-  };
-
   const handleRetake = () => {
     setCapturedPreview(null);
     setDetection({
       detected: false,
       confidence: 0,
-      message: inputMode === 'camera' ? 'Align face in oval...' : 'Upload or select a portrait photo.',
+      message: 'Align face in oval reticle...',
+      isLive: false,
+      livenessScore: 0,
+      livenessStep: 'ALIGN_FACE',
     });
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
   };
 
   const toggleCamera = () => {
     setFacingMode((prev) => (prev === 'user' ? 'environment' : 'user'));
   };
+
+  const isReadyToCapture = detection.isLive || isSimplifiedMode;
 
   return (
     <div
@@ -352,58 +261,18 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
       {/* Hidden processing canvas for geometry and face detection */}
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Hidden file input */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/jpeg,image/png,image/webp"
-        onChange={handleFileInputChange}
-        className="hidden"
-        id="camera-file-input"
-      />
-
-      {/* Viewfinder Mode Switch Tabs */}
+      {/* Viewfinder Header Banner */}
       {!capturedPreview && (
-        <div className="p-2.5 bg-[#101520] border-b border-[#1b2332] flex items-center justify-between">
-          <div className="flex items-center space-x-1.5 bg-[#090c12] p-1 rounded-xl border border-[#1d2536]">
-            <button
-              type="button"
-              id="tab-mode-camera"
-              onClick={() => {
-                setInputMode('camera');
-                setErrorMessage('');
-              }}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                inputMode === 'camera'
-                  ? 'bg-[#00FF66] text-[#0a0c10] shadow-[0_0_10px_rgba(0,255,102,0.25)]'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Camera className="w-3.5 h-3.5" />
-              <span>Live Camera</span>
-            </button>
-
-            <button
-              type="button"
-              id="tab-mode-upload"
-              onClick={() => {
-                setInputMode('upload');
-                setErrorMessage('');
-              }}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                inputMode === 'upload'
-                  ? 'bg-[#00FF66] text-[#0a0c10] shadow-[0_0_10px_rgba(0,255,102,0.25)]'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Upload className="w-3.5 h-3.5" />
-              <span>Upload Photo</span>
-            </button>
+        <div className="px-3 py-2.5 bg-[#101520] border-b border-[#1b2332] flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <div className="w-2 h-2 rounded-full bg-[#00FF66] animate-pulse" />
+            <span className="text-xs font-bold text-white tracking-wide">Live Facial Biometrics</span>
           </div>
 
-          <span className="text-[10px] text-slate-400 font-medium px-2 py-0.5 rounded bg-[#161d2b] border border-[#212a3d]">
-            {inputMode === 'camera' ? 'Liveness Active' : 'Photo Verification'}
-          </span>
+          <div className="flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full bg-[#00FF66]/10 border border-[#00FF66]/30 text-[#00FF66] text-[10px] font-bold">
+            <ShieldCheck className="w-3 h-3" />
+            <span>Anti-Spoof Liveness Active</span>
+          </div>
         </div>
       )}
 
@@ -416,67 +285,26 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
               alt="Corps Member Verified Face"
               className="w-full h-full object-cover"
             />
-            <div className="absolute top-2 right-2 bg-[#00FF66] text-[#0a0c10] px-2 py-0.5 rounded-full text-[10px] font-extrabold flex items-center space-x-1 shadow-md">
+            <div className="absolute top-2 right-2 bg-[#00FF66] text-[#0a0c10] px-2.5 py-0.5 rounded-full text-[10px] font-extrabold flex items-center space-x-1 shadow-md">
               <CheckCircle2 className="w-3 h-3" />
-              <span>FACE VERIFIED</span>
+              <span>LIVENESS VERIFIED</span>
             </div>
           </div>
 
           <div className="w-full max-w-[280px] mt-3 flex items-center justify-between text-[11px] text-slate-400">
-            <span>Compressed: {Math.round(capturedPreview.compressedSize / 1024)} KB</span>
-            <span className="text-[#00FF66]">Saved {capturedPreview.reductionPercentage}% bandwidth</span>
+            <span>Biometric Payload: {Math.round(capturedPreview.compressedSize / 1024)} KB</span>
+            <span className="text-[#00FF66]">Optimized {capturedPreview.reductionPercentage}%</span>
           </div>
 
           <button
             id="btn-retake-photo"
             type="button"
             onClick={handleRetake}
-            className="mt-4 flex items-center space-x-2 px-4 py-2 rounded-xl bg-[#1a2230] hover:bg-[#222c3d] text-slate-200 border border-[#2b374d] text-xs font-semibold transition-all"
+            className="mt-4 flex items-center space-x-2 px-4 py-2 rounded-xl bg-[#1a2230] hover:bg-[#222c3d] text-slate-200 border border-[#2b374d] text-xs font-semibold transition-all cursor-pointer"
           >
             <RefreshCw className="w-3.5 h-3.5" />
-            <span>Retake / Change Photo</span>
+            <span>Retake Verification Photo</span>
           </button>
-        </div>
-      ) : inputMode === 'upload' ? (
-        /* Drag & Drop / File Selection Photo View */
-        <div id="camera-upload-zone" className="p-5 flex flex-col items-center">
-          <div
-            onDrop={handleDrop}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onClick={() => fileInputRef.current?.click()}
-            className={`w-full max-w-sm rounded-2xl border-2 border-dashed p-6 text-center cursor-pointer transition-all flex flex-col items-center justify-center ${
-              isDragging
-                ? 'border-[#00FF66] bg-[#00FF66]/10'
-                : 'border-[#263248] hover:border-[#00FF66]/60 bg-[#0e131d]'
-            }`}
-          >
-            <div className="w-12 h-12 rounded-2xl bg-[#151c2a] border border-[#232d40] flex items-center justify-center text-[#00FF66] mb-3 shadow-[0_0_15px_rgba(0,255,102,0.1)]">
-              {isProcessingFile ? (
-                <RefreshCw className="w-6 h-6 animate-spin" />
-              ) : (
-                <ImageIcon className="w-6 h-6" />
-              )}
-            </div>
-
-            <p className="text-xs font-bold text-white mb-1">
-              {isProcessingFile ? 'Verifying facial proportions...' : 'Select or Drag & Drop Photo'}
-            </p>
-            <p className="text-[11px] text-slate-400 max-w-xs mb-3">
-              Supports JPEG, PNG, or WebP. Proportions will be validated for facial presence.
-            </p>
-
-            <button
-              type="button"
-              className="px-4 py-1.5 rounded-lg bg-[#1a2333] hover:bg-[#242f44] text-[#00FF66] text-xs font-semibold border border-[#2c3a52] transition-colors"
-            >
-              Browse Photo
-            </button>
-          </div>
-
-          {errorMessage && (
-            <p className="text-xs text-rose-400 mt-3 text-center max-w-xs">{errorMessage}</p>
-          )}
         </div>
       ) : permissionState === 'denied' || permissionState === 'no_device' || permissionState === 'error' ? (
         /* Camera Error / No Device Fallback UI */
@@ -503,33 +331,18 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
           </h3>
 
           <p className="text-xs text-slate-300 max-w-xs mb-4 leading-relaxed">
-            {errorMessage ||
-              (permissionState === 'no_device'
-                ? 'No physical camera was detected on this device. You can switch to Upload Photo to proceed.'
-                : 'Facial presence verification requires camera access.')}
+            {errorMessage || 'Facial biometrics and anti-spoof liveness check require active camera access.'}
           </p>
 
-          <div className="flex flex-col sm:flex-row items-center gap-2 w-full max-w-xs">
-            <button
-              id="btn-switch-to-upload"
-              type="button"
-              onClick={() => setInputMode('upload')}
-              className="w-full flex items-center justify-center space-x-2 px-4 py-2.5 rounded-xl bg-[#00FF66] text-[#0a0c10] text-xs font-bold shadow-[0_0_15px_rgba(0,255,102,0.3)] hover:bg-[#00e55b] transition-all cursor-pointer"
-            >
-              <Upload className="w-4 h-4" />
-              <span>Use Photo Upload</span>
-            </button>
-
-            <button
-              id="btn-retry-camera"
-              type="button"
-              onClick={() => startCamera(facingMode)}
-              className="w-full flex items-center justify-center space-x-2 px-4 py-2.5 rounded-xl bg-[#17202e] hover:bg-[#202c3f] text-slate-300 border border-[#27344a] text-xs font-semibold transition-all cursor-pointer"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Retry Camera</span>
-            </button>
-          </div>
+          <button
+            id="btn-retry-camera"
+            type="button"
+            onClick={() => startCamera(facingMode)}
+            className="flex items-center justify-center space-x-2 px-5 py-2.5 rounded-xl bg-[#00FF66] text-[#0a0c10] text-xs font-extrabold shadow-[0_0_15px_rgba(0,255,102,0.3)] hover:bg-[#00e55b] transition-all cursor-pointer"
+          >
+            <RefreshCw className="w-4 h-4" />
+            <span>Grant Permission &amp; Retry Camera</span>
+          </button>
         </div>
       ) : (
         /* Active Live Camera Viewfinder */
@@ -546,24 +359,58 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
             className={`w-full h-full object-cover ${facingMode === 'user' ? '-scale-x-100' : ''}`}
           />
 
-          {/* Oval Face Guide Reticle */}
+          {/* Oval Face Guide Reticle with Multi-Stage Dynamic HUD */}
           <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center p-4">
             <div
               id="face-reticle-oval"
               className={`relative w-48 sm:w-56 h-64 sm:h-72 rounded-[50%] border-2 transition-all duration-300 ${
-                detection.detected
-                  ? 'border-[#00FF66] shadow-[0_0_30px_rgba(0,255,102,0.4)]'
+                detection.isLive || isSimplifiedMode
+                  ? 'border-[#00FF66] shadow-[0_0_35px_rgba(0,255,102,0.45)]'
+                  : detection.detected
+                  ? 'border-cyan-400 shadow-[0_0_25px_rgba(34,211,238,0.35)]'
                   : 'border-slate-500/60 border-dashed'
               }`}
             >
               {/* Corner crosshairs */}
-              <div className="absolute -top-1 -left-1 w-4 h-4 border-t-2 border-l-2 border-[#00FF66]" />
-              <div className="absolute -top-1 -right-1 w-4 h-4 border-t-2 border-r-2 border-[#00FF66]" />
-              <div className="absolute -bottom-1 -left-1 w-4 h-4 border-b-2 border-l-2 border-[#00FF66]" />
-              <div className="absolute -bottom-1 -right-1 w-4 h-4 border-b-2 border-r-2 border-[#00FF66]" />
+              <div
+                className={`absolute -top-1 -left-1 w-4 h-4 border-t-2 border-l-2 transition-colors ${
+                  detection.isLive || isSimplifiedMode
+                    ? 'border-[#00FF66]'
+                    : detection.detected
+                    ? 'border-cyan-400'
+                    : 'border-slate-500'
+                }`}
+              />
+              <div
+                className={`absolute -top-1 -right-1 w-4 h-4 border-t-2 border-r-2 transition-colors ${
+                  detection.isLive || isSimplifiedMode
+                    ? 'border-[#00FF66]'
+                    : detection.detected
+                    ? 'border-cyan-400'
+                    : 'border-slate-500'
+                }`}
+              />
+              <div
+                className={`absolute -bottom-1 -left-1 w-4 h-4 border-b-2 border-l-2 transition-colors ${
+                  detection.isLive || isSimplifiedMode
+                    ? 'border-[#00FF66]'
+                    : detection.detected
+                    ? 'border-cyan-400'
+                    : 'border-slate-500'
+                }`}
+              />
+              <div
+                className={`absolute -bottom-1 -right-1 w-4 h-4 border-b-2 border-r-2 transition-colors ${
+                  detection.isLive || isSimplifiedMode
+                    ? 'border-[#00FF66]'
+                    : detection.detected
+                    ? 'border-cyan-400'
+                    : 'border-slate-500'
+                }`}
+              />
 
-              {/* Scanning laser beam animation */}
-              {detection.detected && (
+              {/* Laser scanning beam animation when liveness is verified */}
+              {(detection.isLive || isSimplifiedMode) && (
                 <div className="absolute left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-[#00FF66] to-transparent shadow-[0_0_12px_#00FF66] animate-scan" />
               )}
             </div>
@@ -571,48 +418,61 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
             {/* Live Guidance Status Badge */}
             <div
               id="detection-guidance-badge"
-              className={`mt-3 px-3.5 py-1.5 rounded-full text-xs font-semibold flex items-center space-x-2 transition-all backdrop-blur-md ${
-                detection.detected || isSimplifiedMode
+              className={`mt-3 px-3.5 py-1.5 rounded-full text-xs font-semibold flex flex-col items-center transition-all backdrop-blur-md ${
+                detection.isLive || isSimplifiedMode
                   ? 'bg-[#00FF66]/20 text-[#00FF66] border border-[#00FF66]/40 shadow-[0_0_15px_rgba(0,255,102,0.25)]'
+                  : detection.detected
+                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-[0_0_15px_rgba(34,211,238,0.2)]'
                   : 'bg-black/75 text-slate-300 border border-slate-700'
               }`}
             >
-              {isSimplifiedMode ? (
-                <>
-                  <Zap className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
-                  <span>Quick Capture Active • Ready to Snap</span>
-                </>
-              ) : detection.detected ? (
-                <>
-                  <Sparkles className="w-3.5 h-3.5 text-[#00FF66] animate-pulse" />
-                  <span>AI Face &amp; Liveness Locked ({Math.round(detection.confidence * 100)}%) • Ready</span>
-                </>
-              ) : (
-                <span>{detection.message}</span>
+              <div className="flex items-center space-x-2">
+                {isSimplifiedMode ? (
+                  <>
+                    <Zap className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+                    <span>Quick Capture Active • Ready to Snap</span>
+                  </>
+                ) : detection.isLive ? (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5 text-[#00FF66] animate-pulse" />
+                    <span>🛡️ Liveness Verified ({Math.round(detection.confidence * 100)}%) • Ready to Snap</span>
+                  </>
+                ) : detection.detected ? (
+                  <>
+                    <Eye className="w-3.5 h-3.5 text-cyan-400 animate-bounce" />
+                    <span>{detection.message}</span>
+                  </>
+                ) : (
+                  <span>{detection.message}</span>
+                )}
+              </div>
+
+              {/* Liveness meter bar when in interactive challenge */}
+              {detection.detected && !detection.isLive && !isSimplifiedMode && (
+                <div className="w-36 h-1.5 bg-black/60 rounded-full mt-1.5 overflow-hidden border border-cyan-500/30">
+                  <div
+                    className="h-full bg-cyan-400 transition-all duration-200 rounded-full"
+                    style={{ width: `${detection.livenessScore || 30}%` }}
+                  />
+                </div>
               )}
             </div>
           </div>
 
-          {/* Quick Capture Mode Badge & Switcher */}
+          {/* Mode Switcher (AI Detector vs Quick Capture) */}
           <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5">
             <button
               type="button"
-              onClick={() => {
-                const nextMode = !isSimplifiedMode;
-                setIsSimplifiedMode(nextMode);
-                if (nextMode) {
-                  faceDetectorWorkerManager.activateSimplifiedFallback('User selected Quick Capture');
-                }
-              }}
+              onClick={() => setIsSimplifiedMode(!isSimplifiedMode)}
               className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-all flex items-center gap-1 backdrop-blur-md cursor-pointer ${
                 isSimplifiedMode
                   ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
                   : 'bg-black/60 text-slate-300 border-white/20 hover:bg-black/80'
               }`}
-              title="Toggle between AI Face Detection and Simplified Quick Capture"
+              title="Toggle between AI Liveness Test and Quick Capture"
             >
               <Zap className="w-3 h-3 text-amber-400" />
-              <span>{isSimplifiedMode ? 'Quick Capture' : 'AI Detector'}</span>
+              <span>{isSimplifiedMode ? 'Quick Capture' : 'AI Liveness'}</span>
             </button>
           </div>
 
@@ -636,7 +496,9 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
               onClick={handleCapture}
               className={`w-full max-w-xs py-3 px-4 rounded-xl font-bold text-xs flex items-center justify-center space-x-2 transition-all cursor-pointer ${
                 !disabled && !isCapturing
-                  ? 'bg-[#00FF66] text-[#0a0c10] shadow-[0_0_20px_rgba(0,255,102,0.4)] hover:bg-[#00e55b] active:scale-[0.98]'
+                  ? isReadyToCapture
+                    ? 'bg-[#00FF66] text-[#0a0c10] shadow-[0_0_25px_rgba(0,255,102,0.5)] hover:bg-[#00e55b] active:scale-[0.98]'
+                    : 'bg-[#18202d]/90 text-slate-300 border border-slate-600 hover:bg-[#222c3d]'
                   : 'bg-[#18202d]/80 text-slate-500 border border-slate-700/60 cursor-not-allowed'
               }`}
             >
@@ -646,9 +508,9 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
                   ? 'Verifying & Compressing...'
                   : disabled
                   ? 'Geofence check pending...'
-                  : detection.detected
-                  ? 'Capture & Verify Face'
-                  : 'Capture Verification Snapshot'}
+                  : isReadyToCapture
+                  ? '📸 Capture Verified Face'
+                  : 'Snap Photo'}
               </span>
             </button>
           </div>
@@ -657,3 +519,4 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
     </div>
   );
 }
+
