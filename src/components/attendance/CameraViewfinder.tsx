@@ -46,21 +46,25 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [capturedPreview, setCapturedPreview] = useState<CompressionResult | null>(null);
 
-  // Worker status and AI Detector mode state (AI Detector is active by default)
-  const [workerStatus, setWorkerStatus] = useState<DetectorWorkerStatus>(() =>
-    faceDetectorWorkerManager.getStatus()
-  );
+  // AI Detector is active by default
   const [isSimplifiedMode, setIsSimplifiedMode] = useState<boolean>(false);
 
-  // Subscribe to worker status updates
-  useEffect(() => {
-    const unsubscribe = faceDetectorWorkerManager.subscribeStatus((status) => {
-      setWorkerStatus(status);
-    });
-    return unsubscribe;
+  // Helper to attach stream to video element safely
+  const attachStreamToVideo = useCallback((stream: MediaStream) => {
+    if (videoRef.current) {
+      if (videoRef.current.srcObject !== stream) {
+        videoRef.current.srcObject = stream;
+      }
+      videoRef.current.setAttribute('playsinline', 'true');
+      videoRef.current.muted = true;
+      videoRef.current.autoplay = true;
+      videoRef.current.play().catch((playErr) => {
+        console.warn('Auto-play notice (non-fatal):', playErr);
+      });
+    }
   }, []);
 
-  // Initialize camera stream with progressive fallback
+  // Initialize camera stream with robust fallbacks
   const startCamera = useCallback(async (mode: 'user' | 'environment') => {
     try {
       if (streamRef.current) {
@@ -68,25 +72,10 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
         streamRef.current = null;
       }
 
-      if (!navigator?.mediaDevices?.getUserMedia) {
+      if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
         setPermissionState('no_device');
-        setErrorMessage('Camera access is not supported in this browser environment. You can upload a portrait photo or use the NYSC sample test photo below.');
+        setErrorMessage('Camera is not supported on this browser or platform. You can upload a photo instead.');
         return;
-      }
-
-      // Check available media devices first if supported
-      if (navigator?.mediaDevices?.enumerateDevices) {
-        try {
-          const devices = await navigator.mediaDevices.enumerateDevices();
-          const videoDevices = devices.filter((d) => d.kind === 'videoinput');
-          if (devices.length > 0 && videoDevices.length === 0) {
-            setPermissionState('no_device');
-            setErrorMessage('No camera device detected on this hardware. Please upload a photo or use the sample test photo below.');
-            return;
-          }
-        } catch {
-          // Continue to getUserMedia attempt
-        }
       }
 
       setPermissionState('prompt');
@@ -95,26 +84,37 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
       let stream: MediaStream | null = null;
       let caughtError: unknown = null;
 
-      // 1. Attempt with ideal facingMode and dimensions
+      // 1. Primary constraint attempt: facingMode with standard dimensions
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
-            facingMode: { ideal: mode },
+            facingMode: mode,
             width: { ideal: 640 },
             height: { ideal: 480 },
           },
           audio: false,
         });
-      } catch (firstErr: unknown) {
+      } catch (firstErr) {
         caughtError = firstErr;
-        // 2. Fallback to basic video constraint without facingMode (accommodates desktop/USB webcams)
+        // 2. Fallback with ideal facingMode
         try {
           stream = await navigator.mediaDevices.getUserMedia({
-            video: true,
+            video: {
+              facingMode: { ideal: mode },
+            },
             audio: false,
           });
-        } catch (secondErr: unknown) {
+        } catch (secondErr) {
           caughtError = secondErr;
+          // 3. Fallback to basic unconstrained video (works on external webcams, virtual cams, laptops)
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: true,
+              audio: false,
+            });
+          } catch (thirdErr) {
+            caughtError = thirdErr;
+          }
         }
       }
 
@@ -123,18 +123,7 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
       }
 
       streamRef.current = stream;
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.setAttribute('playsinline', 'true');
-        videoRef.current.muted = true;
-        try {
-          await videoRef.current.play();
-        } catch (playErr) {
-          console.warn('Video playback warning:', playErr);
-        }
-      }
-
+      attachStreamToVideo(stream);
       setPermissionState('granted');
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -158,48 +147,65 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
         console.warn('Camera access denied:', errMsg);
         setPermissionState('denied');
         setErrorMessage(
-          'Camera access was blocked by your browser. You can enable it in your browser settings, or switch to the Upload Photo option.'
+          'Camera permission was blocked. Please grant camera permission in your browser URL bar or use Photo Upload.'
         );
       } else if (isNoDevice) {
-        console.info('No camera device found on host:', errMsg);
+        console.info('No camera device found:', errMsg);
         setPermissionState('no_device');
         setErrorMessage(
-          'No camera device detected on this device. You can upload a photo or use the verified NYSC sample photo below.'
+          'No camera hardware was detected on this device. You can switch to Upload Photo to proceed.'
         );
       } else {
-        console.warn('Camera access unavailable:', errMsg);
+        console.warn('Camera initialization notice:', errMsg);
         setPermissionState('error');
         setErrorMessage(errMsg || 'Unable to access camera on this device.');
       }
     }
-  }, []);
+  }, [attachStreamToVideo]);
 
+  // Handle camera start/stop lifecycle purely on mode/facingMode changes
   useEffect(() => {
-    if (inputMode === 'camera' && permissionState !== 'no_device' && permissionState !== 'denied') {
+    let isActive = true;
+
+    if (inputMode === 'camera') {
       startCamera(facingMode);
     }
 
     return () => {
+      isActive = false;
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
       }
     };
-  }, [facingMode, inputMode, startCamera, permissionState]);
+  }, [facingMode, inputMode, startCamera]);
 
-  // Face Detection Loop for Live Video
+  // Video Ref callback to guarantee srcObject attachment even if DOM mounts later
+  const setVideoElementRef = useCallback((el: HTMLVideoElement | null) => {
+    videoRef.current = el;
+    if (el && streamRef.current) {
+      attachStreamToVideo(streamRef.current);
+    }
+  }, [attachStreamToVideo]);
+
+  // Face Detection Loop for Live Video (Runs smoothly every ~120ms)
   useEffect(() => {
     if (inputMode !== 'camera' || permissionState !== 'granted' || capturedPreview || isCapturing) {
       return;
     }
 
     let isSubscribed = true;
-    let animationFrameId: number;
+    let timerId: number;
 
-    const runDetection = async () => {
-      if (videoRef.current && canvasRef.current && videoRef.current.readyState >= 2) {
+    const tick = async () => {
+      if (!isSubscribed) return;
+
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+
+      if (video && canvas && video.readyState >= 2 && video.videoWidth > 0) {
         try {
-          const res = await detectFaceInVideoFrame(videoRef.current, canvasRef.current);
+          const res = await detectFaceInVideoFrame(video, canvas);
           if (isSubscribed) {
             setDetection(res);
           }
@@ -209,20 +215,15 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
       }
 
       if (isSubscribed) {
-        // Run detection every ~150ms for low battery/CPU consumption
-        setTimeout(() => {
-          if (isSubscribed) {
-            animationFrameId = requestAnimationFrame(runDetection);
-          }
-        }, 150);
+        timerId = window.setTimeout(tick, 120);
       }
     };
 
-    animationFrameId = requestAnimationFrame(runDetection);
+    timerId = window.setTimeout(tick, 200);
 
     return () => {
       isSubscribed = false;
-      cancelAnimationFrame(animationFrameId);
+      clearTimeout(timerId);
     };
   }, [permissionState, capturedPreview, isCapturing, inputMode]);
 
@@ -513,7 +514,7 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
               id="btn-switch-to-upload"
               type="button"
               onClick={() => setInputMode('upload')}
-              className="w-full flex items-center justify-center space-x-2 px-4 py-2.5 rounded-xl bg-[#00FF66] text-[#0a0c10] text-xs font-bold shadow-[0_0_15px_rgba(0,255,102,0.3)] hover:bg-[#00e55b] transition-all"
+              className="w-full flex items-center justify-center space-x-2 px-4 py-2.5 rounded-xl bg-[#00FF66] text-[#0a0c10] text-xs font-bold shadow-[0_0_15px_rgba(0,255,102,0.3)] hover:bg-[#00e55b] transition-all cursor-pointer"
             >
               <Upload className="w-4 h-4" />
               <span>Use Photo Upload</span>
@@ -523,7 +524,7 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
               id="btn-retry-camera"
               type="button"
               onClick={() => startCamera(facingMode)}
-              className="w-full flex items-center justify-center space-x-2 px-4 py-2.5 rounded-xl bg-[#17202e] hover:bg-[#202c3f] text-slate-300 border border-[#27344a] text-xs font-semibold transition-all"
+              className="w-full flex items-center justify-center space-x-2 px-4 py-2.5 rounded-xl bg-[#17202e] hover:bg-[#202c3f] text-slate-300 border border-[#27344a] text-xs font-semibold transition-all cursor-pointer"
             >
               <RefreshCw className="w-3.5 h-3.5" />
               <span>Retry Camera</span>
@@ -534,10 +535,14 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
         /* Active Live Camera Viewfinder */
         <div className="relative aspect-square sm:aspect-[4/3] w-full max-h-[380px] flex items-center justify-center overflow-hidden bg-black">
           <video
-            ref={videoRef}
+            ref={setVideoElementRef}
             playsInline
             muted
             autoPlay
+            onLoadedMetadata={(e) => {
+              const el = e.currentTarget;
+              el.play().catch((err) => console.warn('Video playback catch:', err));
+            }}
             className={`w-full h-full object-cover ${facingMode === 'user' ? '-scale-x-100' : ''}`}
           />
 
