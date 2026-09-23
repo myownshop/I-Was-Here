@@ -402,6 +402,8 @@ export async function createCampaign(
     ...campaignData,
     id: campaignId,
     createdAt,
+    status: 'active',
+    isClosed: false,
   };
 
   const shortLinkData: ShortLink = {
@@ -422,6 +424,8 @@ export async function createCampaign(
       shortCode: fullCampaign.shortCode,
       timeBlocks: fullCampaign.timeBlocks || [],
       createdAt: fullCampaign.createdAt,
+      status: 'active',
+      isClosed: false,
     });
 
     await setDoc(doc(db, 'short_links', shortLinkData.shortCode), {
@@ -441,6 +445,120 @@ export async function createCampaign(
   setLocalCache(LOCAL_SHORTLINKS_KEY, [shortLinkData, ...cachedLinks]);
 
   return fullCampaign;
+}
+
+/**
+ * Ends/closes an active session, marking it as closed and moving it to history.
+ */
+export async function closeCampaign(campaignId: string): Promise<Campaign> {
+  const closedAt = new Date().toISOString();
+  let updatedCampaign: Campaign | null = null;
+
+  try {
+    const campaignRef = doc(db, 'campaigns', campaignId);
+    await setDoc(
+      campaignRef,
+      {
+        status: 'closed',
+        isClosed: true,
+        closedAt,
+      },
+      { merge: true }
+    );
+  } catch (error) {
+    console.warn('Firestore close campaign write error, updating cache fallback:', error);
+  }
+
+  const cached = getLocalCache<Campaign>(LOCAL_CAMPAIGNS_KEY, []);
+  const updatedList = cached.map((c) => {
+    if (c.id === campaignId) {
+      updatedCampaign = {
+        ...c,
+        status: 'closed' as const,
+        isClosed: true,
+        closedAt,
+      };
+      return updatedCampaign;
+    }
+    return c;
+  });
+
+  setLocalCache(LOCAL_CAMPAIGNS_KEY, updatedList);
+
+  if (updatedCampaign) {
+    return updatedCampaign;
+  }
+
+  return {
+    id: campaignId,
+    orgId: '',
+    name: 'Closed Session',
+    date: new Date().toISOString().split('T')[0],
+    targetLatitude: 0,
+    targetLongitude: 0,
+    allowedRadius: 100,
+    shortCode: '',
+    createdAt: new Date().toISOString(),
+    status: 'closed',
+    isClosed: true,
+    closedAt,
+  };
+}
+
+/**
+ * Re-opens a previously closed session.
+ */
+export async function reopenCampaign(campaignId: string): Promise<Campaign> {
+  let updatedCampaign: Campaign | null = null;
+
+  try {
+    const campaignRef = doc(db, 'campaigns', campaignId);
+    await setDoc(
+      campaignRef,
+      {
+        status: 'active',
+        isClosed: false,
+        closedAt: null,
+      },
+      { merge: true }
+    );
+  } catch (error) {
+    console.warn('Firestore reopen campaign write error, updating cache fallback:', error);
+  }
+
+  const cached = getLocalCache<Campaign>(LOCAL_CAMPAIGNS_KEY, []);
+  const updatedList = cached.map((c) => {
+    if (c.id === campaignId) {
+      updatedCampaign = {
+        ...c,
+        status: 'active' as const,
+        isClosed: false,
+        closedAt: undefined,
+      };
+      return updatedCampaign;
+    }
+    return c;
+  });
+
+  setLocalCache(LOCAL_CAMPAIGNS_KEY, updatedList);
+
+  if (updatedCampaign) {
+    return updatedCampaign;
+  }
+
+  return {
+    id: campaignId,
+    orgId: '',
+    name: 'Active Session',
+    date: new Date().toISOString().split('T')[0],
+    targetLatitude: 0,
+    targetLongitude: 0,
+    allowedRadius: 100,
+    shortCode: '',
+    createdAt: new Date().toISOString(),
+    status: 'active',
+    isClosed: false,
+  };
 }
 
 export async function getCampaignById(campaignId: string): Promise<Campaign | null> {
@@ -464,6 +582,9 @@ export async function getCampaignById(campaignId: string): Promise<Campaign | nu
             shortCode: data.shortCode,
             timeBlocks: data.timeBlocks || [],
             createdAt: data.createdAt,
+            status: data.status || (data.isClosed ? 'closed' : 'active'),
+            isClosed: Boolean(data.isClosed || data.status === 'closed'),
+            closedAt: data.closedAt || undefined,
           };
           setLocalCache(LOCAL_CAMPAIGNS_KEY, [
             refreshed,
@@ -491,6 +612,9 @@ export async function getCampaignById(campaignId: string): Promise<Campaign | nu
         shortCode: data.shortCode,
         timeBlocks: data.timeBlocks || [],
         createdAt: data.createdAt,
+        status: data.status || (data.isClosed ? 'closed' : 'active'),
+        isClosed: Boolean(data.isClosed || data.status === 'closed'),
+        closedAt: data.closedAt || undefined,
       };
       setLocalCache(LOCAL_CAMPAIGNS_KEY, [campaign, ...cached]);
       return campaign;
@@ -552,6 +676,9 @@ export async function resolveShortCode(rawCode: string): Promise<Campaign | null
         shortCode: data.shortCode,
         timeBlocks: data.timeBlocks || [],
         createdAt: data.createdAt,
+        status: data.status || (data.isClosed ? 'closed' : 'active'),
+        isClosed: Boolean(data.isClosed || data.status === 'closed'),
+        closedAt: data.closedAt || undefined,
       };
       setLocalCache(LOCAL_CAMPAIGNS_KEY, [campaign, ...cachedCampaigns]);
       return campaign;
@@ -579,7 +706,11 @@ export async function getCampaignsForOrg(orgId: string): Promise<Campaign[]> {
         targetLongitude: Number(data.targetLongitude),
         allowedRadius: Number(data.allowedRadius),
         shortCode: data.shortCode,
+        timeBlocks: data.timeBlocks || [],
         createdAt: data.createdAt,
+        status: data.status || (data.isClosed ? 'closed' : 'active'),
+        isClosed: Boolean(data.isClosed || data.status === 'closed'),
+        closedAt: data.closedAt || undefined,
       });
     });
 
@@ -610,7 +741,11 @@ export async function getAllCampaigns(): Promise<Campaign[]> {
         targetLongitude: Number(data.targetLongitude),
         allowedRadius: Number(data.allowedRadius),
         shortCode: data.shortCode,
+        timeBlocks: data.timeBlocks || [],
         createdAt: data.createdAt,
+        status: data.status || (data.isClosed ? 'closed' : 'active'),
+        isClosed: Boolean(data.isClosed || data.status === 'closed'),
+        closedAt: data.closedAt || undefined,
       });
     });
 

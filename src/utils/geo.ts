@@ -90,45 +90,131 @@ export function formatDistance(meters: number): string {
 
 /**
  * Asynchronously requests the user's high-accuracy GPS coordinates.
- * Handles permissions, timeouts, and hardware errors with clear user feedback.
+ * Employs a multi-tiered progressive fallback strategy:
+ * 1. Fast High-Accuracy Satellite GPS Fix (timeout: 5s, maxAge: 10s)
+ * 2. Standard Accuracy Network/Cell/WiFi Fallback (timeout: 8s, maxAge: 30s)
+ * 3. Brief WatchPosition recovery stream (timeout: 4s)
+ * Handles permissions, hardware delays, and outdoor mobile constraints.
  */
 export async function getCurrentCoordinates(): Promise<GeoLocationCoordinates> {
-  return new Promise((resolve, reject) => {
-    if (typeof window === 'undefined' || !navigator.geolocation) {
-      reject(new Error('Geolocation is not supported by your mobile browser.'));
-      return;
+  if (typeof window === 'undefined' || !navigator?.geolocation) {
+    throw new Error('Geolocation is not supported by your mobile browser.');
+  }
+
+  // Helper promise for getCurrentPosition
+  const requestPosition = (options: PositionOptions): Promise<GeolocationPosition> => {
+    return new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(resolve, reject, options);
+    });
+  };
+
+  // Helper for watchPosition recovery
+  const requestWatchFix = (timeoutMs: number): Promise<GeolocationPosition> => {
+    return new Promise((resolve, reject) => {
+      let watchId: number | null = null;
+      const timer = setTimeout(() => {
+        if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+        reject(new Error('GPS satellite watch timed out.'));
+      }, timeoutMs);
+
+      try {
+        watchId = navigator.geolocation.watchPosition(
+          (pos) => {
+            clearTimeout(timer);
+            if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+            resolve(pos);
+          },
+          (err) => {
+            clearTimeout(timer);
+            if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+            reject(err);
+          },
+          { enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 10000 }
+        );
+      } catch (err) {
+        clearTimeout(timer);
+        reject(err);
+      }
+    });
+  };
+
+  // Tier 1: Try High Accuracy GPS with 5-second timeout
+  try {
+    const pos = await requestPosition({
+      enableHighAccuracy: true,
+      timeout: 5000,
+      maximumAge: 5000,
+    });
+    return {
+      latitude: pos.coords.latitude,
+      longitude: pos.coords.longitude,
+      accuracy: pos.coords.accuracy || 10,
+    };
+  } catch (firstErr: unknown) {
+    const isPermissionDenied =
+      firstErr instanceof GeolocationPositionError &&
+      firstErr.code === firstErr.PERMISSION_DENIED;
+
+    if (isPermissionDenied) {
+      throw new Error(
+        'Location access was denied. Please enable GPS permissions in your browser settings to verify CDS presence.'
+      );
     }
 
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        resolve({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          accuracy: position.coords.accuracy || 10,
-        });
-      },
-      (error) => {
-        let message = 'Unable to retrieve your current location.';
-        switch (error.code) {
-          case error.PERMISSION_DENIED:
-            message = 'Location access was denied. Please enable GPS permissions in your browser settings to verify CDS presence.';
-            break;
-          case error.POSITION_UNAVAILABLE:
-            message = 'GPS location information is currently unavailable. Ensure device location service is turned on.';
-            break;
-          case error.TIMEOUT:
-            message = 'GPS location request timed out. Please step into an open area outdoors and retry.';
-            break;
-        }
-        reject(new Error(message));
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 15000,
-        maximumAge: 0,
+    console.info('High-accuracy GPS request delayed/unavailable, trying standard accuracy fallback...');
+  }
+
+  // Tier 2: Try Standard Accuracy (Cell/WiFi/Network) with 7-second timeout
+  try {
+    const pos = await requestPosition({
+      enableHighAccuracy: false,
+      timeout: 7000,
+      maximumAge: 30000,
+    });
+    return {
+      latitude: pos.coords.latitude,
+      longitude: pos.coords.longitude,
+      accuracy: pos.coords.accuracy || 25,
+    };
+  } catch (secondErr: unknown) {
+    const isPermissionDenied =
+      secondErr instanceof GeolocationPositionError &&
+      secondErr.code === secondErr.PERMISSION_DENIED;
+
+    if (isPermissionDenied) {
+      throw new Error(
+        'Location access was denied. Please enable GPS permissions in your browser settings to verify CDS presence.'
+      );
+    }
+
+    console.info('Standard accuracy position unavailable, attempting watchPosition stream recovery...');
+  }
+
+  // Tier 3: WatchPosition stream recovery
+  try {
+    const pos = await requestWatchFix(4000);
+    return {
+      latitude: pos.coords.latitude,
+      longitude: pos.coords.longitude,
+      accuracy: pos.coords.accuracy || 15,
+    };
+  } catch (finalErr: unknown) {
+    let message = 'Unable to acquire accurate GPS position. Please ensure device location is switched on and retry.';
+    if (finalErr instanceof GeolocationPositionError) {
+      switch (finalErr.code) {
+        case finalErr.PERMISSION_DENIED:
+          message = 'Location access was denied. Please enable GPS permissions in your browser settings to verify CDS presence.';
+          break;
+        case finalErr.POSITION_UNAVAILABLE:
+          message = 'GPS location is currently unavailable. Ensure device location service is turned on.';
+          break;
+        case finalErr.TIMEOUT:
+          message = 'GPS location request timed out. Please step outdoors or into an open area and tap Retry GPS.';
+          break;
       }
-    );
-  });
+    }
+    throw new Error(message);
+  }
 }
 
 /**

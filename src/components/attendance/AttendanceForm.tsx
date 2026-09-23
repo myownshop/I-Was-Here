@@ -292,6 +292,10 @@ export function AttendanceForm({
           timestamp,
         });
 
+        if (!storedLocal || !storedLocal.id) {
+          throw new Error('IndexedDB storage failed to return valid persisted record ID.');
+        }
+
         // 2. Also generate encrypted .iwh file for physical verification backup
         const offlineRecord: OfflineAttendanceRecord = {
           name: name.trim(),
@@ -329,6 +333,7 @@ export function AttendanceForm({
           tampered: isTampered,
         };
 
+        // Strictly trigger success UI only AFTER IndexedDB commit and .iwh generation succeed
         setIsOfflinePackage(true);
         setOfflineFilename(downloadedName);
         setCompletedAttendee(syntheticAttendee);
@@ -339,7 +344,8 @@ export function AttendanceForm({
         );
       } catch (cryptoErr) {
         console.error('Offline storage/encryption error:', cryptoErr);
-        showToast('error', 'Failed to save offline record to IndexedDB.', 'Offline Error');
+        setCompletedAttendee(null);
+        showToast('error', 'Failed to save offline record to IndexedDB. Please retry submission.', 'Offline Error');
       } finally {
         setIsSubmitting(false);
       }
@@ -384,6 +390,11 @@ export function AttendanceForm({
         tampered: isTampered,
       });
 
+      if (!newAttendee || !newAttendee.id) {
+        throw new Error('Firestore write failed to return confirmed attendee document.');
+      }
+
+      // Strictly trigger success UI only AFTER confirmed write
       setIsOfflinePackage(false);
       setCompletedAttendee(newAttendee);
       showToast('success', 'Attendance and biometrics logged successfully!', 'Verified');
@@ -403,6 +414,10 @@ export function AttendanceForm({
           loggedIp: 'Offline Fallback',
           timestamp,
         });
+
+        if (!storedLocal || !storedLocal.id) {
+          throw new Error('IndexedDB fallback storage failed.');
+        }
 
         const fallbackRecord: OfflineAttendanceRecord = {
           name: name.trim(),
@@ -438,6 +453,7 @@ export function AttendanceForm({
           tampered: isTampered,
         };
 
+        // Strictly trigger success UI only AFTER fallback IndexedDB write succeeds
         setIsOfflinePackage(true);
         setOfflineFilename(downloadedName);
         setCompletedAttendee(syntheticAttendee);
@@ -446,8 +462,10 @@ export function AttendanceForm({
           'Cloud connection interrupted: Queued in IndexedDB and downloaded .iwh backup.',
           'Offline Queued'
         );
-      } catch {
-        showToast('error', 'Submission failed. Please check device connectivity.', 'Error');
+      } catch (fallbackErr) {
+        console.error('Both Firestore and IndexedDB writes failed:', fallbackErr);
+        setCompletedAttendee(null);
+        showToast('error', 'Submission failed. Please check device connectivity and storage permissions.', 'Error');
       }
     } finally {
       setIsSubmitting(false);
@@ -507,6 +525,34 @@ export function AttendanceForm({
           <div className="h-40 bg-slate-800/40 rounded-xl animate-pulse" />
         </div>
       ) : campaign ? (
+        campaign.status === 'closed' || campaign.isClosed ? (
+          <div className="bg-[#0e131d] border border-rose-500/30 rounded-3xl p-6 sm:p-8 text-center space-y-4 shadow-xl">
+            <div className="w-14 h-14 rounded-2xl bg-rose-500/15 border border-rose-500/40 flex items-center justify-center text-rose-400 mx-auto shadow-inner">
+              <Lock className="w-7 h-7" />
+            </div>
+            <div className="space-y-1.5">
+              <span className="text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full bg-rose-950 text-rose-300 border border-rose-800 uppercase">
+                SESSION CONCLUDED
+              </span>
+              <h3 className="text-xl font-bold text-white pt-1">{campaign.name}</h3>
+              <p className="text-xs text-slate-400 max-w-sm mx-auto leading-relaxed">
+                This attendance session has been ended and closed by the CDS Coordinator. New attendance submissions are no longer accepted for this roll call.
+              </p>
+            </div>
+            {onBackToHome && (
+              <div className="pt-3">
+                <button
+                  type="button"
+                  onClick={onBackToHome}
+                  className="px-6 py-2.5 rounded-xl font-bold text-xs text-slate-200 bg-[#161e2b] hover:bg-[#202a3a] border border-[#273449] transition-all cursor-pointer inline-flex items-center space-x-2"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  <span>Return to Home</span>
+                </button>
+              </div>
+            )}
+          </div>
+        ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* Prominent Dynamic Organization & Campaign Header Card */}
           <div
@@ -753,6 +799,7 @@ export function AttendanceForm({
             </div>
           </div>
         </form>
+        )
       ) : (
         /* Campaign Not Found / Manual Short Code Lookup Form */
         <div id="manual-campaign-lookup" className="rounded-2xl bg-[#0e121a] border border-[#1e273a] p-6 text-center">

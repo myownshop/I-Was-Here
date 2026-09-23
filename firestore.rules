@@ -44,7 +44,11 @@ service cloud.firestore {
         && data.targetLatitude is number
         && data.targetLongitude is number
         && data.allowedRadius is number
-        && data.shortCode is string && data.shortCode.size() == 5;
+        && data.shortCode is string && data.shortCode.size() == 5
+        && (!('timeBlocks' in data) || (data.timeBlocks is list))
+        && (!('status' in data) || (data.status is string && data.status in ['active', 'closed']))
+        && (!('isClosed' in data) || (data.isClosed is bool))
+        && (!('closedAt' in data) || (data.closedAt is string || data.closedAt == null));
     }
 
     function isValidShortLink(data) {

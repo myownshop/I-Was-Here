@@ -65,17 +65,22 @@ export function VenueGuidanceMap({
         )
       : null;
 
-  // OpenStreetMap URLs
-  const osmVenueUrl = `https://www.openstreetmap.org/?mlat=${campaign.targetLatitude}&mlon=${campaign.targetLongitude}#map=18/${campaign.targetLatitude}/${campaign.targetLongitude}`;
+  // OpenStreetMap URLs using exact member GPS coordinates
+  const osmMemberExactUrl = userCoords
+    ? `https://www.openstreetmap.org/?mlat=${userCoords.latitude}&mlon=${userCoords.longitude}#map=19/${userCoords.latitude}/${userCoords.longitude}`
+    : `https://www.openstreetmap.org/?mlat=${campaign.targetLatitude}&mlon=${campaign.targetLongitude}#map=18/${campaign.targetLatitude}/${campaign.targetLongitude}`;
+
   const osmDirectionsUrl = userCoords
     ? `https://www.openstreetmap.org/directions?engine=fossgis_osrm_foot&route=${userCoords.latitude}%2C${userCoords.longitude}%3B${campaign.targetLatitude}%2C${campaign.targetLongitude}`
-    : osmVenueUrl;
+    : osmMemberExactUrl;
 
-  const googleMapsUrl = getGoogleMapsNavigationUrl(
-    campaign.targetLatitude,
-    campaign.targetLongitude,
-    campaign.name
-  );
+  const googleMapsUrl = userCoords
+    ? `https://www.google.com/maps/dir/?api=1&origin=${userCoords.latitude},${userCoords.longitude}&destination=${campaign.targetLatitude},${campaign.targetLongitude}&travelmode=walking`
+    : getGoogleMapsNavigationUrl(
+        campaign.targetLatitude,
+        campaign.targetLongitude,
+        campaign.name
+      );
 
   // Initialize Leaflet map with OpenStreetMap
   useEffect(() => {
@@ -486,14 +491,21 @@ export function VenueGuidanceMap({
       {/* Footer Info & Position Refresh Bar */}
       <div className="p-3 bg-[#0d121c] border-t border-[#1b2536] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs text-slate-400">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-mono text-[11px] text-slate-300">
-            Target Coordinates: {campaign.targetLatitude.toFixed(5)}, {campaign.targetLongitude.toFixed(5)}
-          </span>
+          {userCoords ? (
+            <span className="font-mono text-[11px] text-sky-300 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-ping" />
+              Member GPS: {userCoords.latitude.toFixed(6)}, {userCoords.longitude.toFixed(6)} (±{Math.round(userCoords.accuracy || 10)}m)
+            </span>
+          ) : (
+            <span className="font-mono text-[11px] text-slate-300">
+              Target Venue: {campaign.targetLatitude.toFixed(5)}, {campaign.targetLongitude.toFixed(5)}
+            </span>
+          )}
           <button
             type="button"
             onClick={handleCopyCoords}
             className="text-slate-400 hover:text-white p-1 rounded hover:bg-[#151c28] transition-colors cursor-pointer"
-            title="Copy Coordinates to Clipboard"
+            title="Copy Venue Coordinates to Clipboard"
           >
             {copied ? (
               <Check className="w-3.5 h-3.5 text-[#00FF66]" />

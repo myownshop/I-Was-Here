@@ -8,12 +8,17 @@ import {
   SwitchCamera,
   Upload,
   Image as ImageIcon,
+  Zap,
 } from 'lucide-react';
 import {
   detectFaceInVideoFrame,
   detectFaceInImageSource,
   FaceDetectionResult,
 } from '../../services/faceDetector';
+import {
+  faceDetectorWorkerManager,
+  DetectorWorkerStatus,
+} from '../../services/faceDetectionWorkerManager';
 import { compressFacialImage, CompressionResult } from '../../utils/imageCompression';
 
 interface CameraViewfinderProps {
@@ -40,6 +45,43 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
   const [isProcessingFile, setIsProcessingFile] = useState<boolean>(false);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [capturedPreview, setCapturedPreview] = useState<CompressionResult | null>(null);
+
+  // Worker status and simplified fallback state
+  const [workerStatus, setWorkerStatus] = useState<DetectorWorkerStatus>(() =>
+    faceDetectorWorkerManager.getStatus()
+  );
+  const [isSimplifiedMode, setIsSimplifiedMode] = useState<boolean>(() =>
+    faceDetectorWorkerManager.getStatus().isSimplifiedFallback
+  );
+
+  // Subscribe to worker status updates
+  useEffect(() => {
+    const unsubscribe = faceDetectorWorkerManager.subscribeStatus((status) => {
+      setWorkerStatus(status);
+      if (status.isSimplifiedFallback) {
+        setIsSimplifiedMode(true);
+      }
+    });
+    return unsubscribe;
+  }, []);
+
+  // 3-Second Detection Timeout: If camera is running and face is not recognized within 3 seconds,
+  // automatically offer/enable simplified quick-capture fallback to prevent user blockage.
+  useEffect(() => {
+    if (inputMode !== 'camera' || permissionState !== 'granted' || capturedPreview || isSimplifiedMode) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      if (!detection.detected) {
+        console.info('Detection pending > 3s: Enabling Quick Capture Mode fallback.');
+        setIsSimplifiedMode(true);
+        faceDetectorWorkerManager.activateSimplifiedFallback('3s timeout fallback activated');
+      }
+    }, 3000);
+
+    return () => clearTimeout(timer);
+  }, [inputMode, permissionState, capturedPreview, detection.detected, isSimplifiedMode]);
 
   // Initialize camera stream with progressive fallback
   const startCamera = useCallback(async (mode: 'user' | 'environment') => {
@@ -546,12 +588,17 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
             <div
               id="detection-guidance-badge"
               className={`mt-3 px-3 py-1 rounded-full text-xs font-semibold flex items-center space-x-1.5 transition-all backdrop-blur-md ${
-                detection.detected
+                detection.detected || isSimplifiedMode
                   ? 'bg-[#00FF66]/20 text-[#00FF66] border border-[#00FF66]/40 shadow-[0_0_15px_rgba(0,255,102,0.2)]'
                   : 'bg-black/60 text-slate-300 border border-slate-700'
               }`}
             >
-              {detection.detected ? (
+              {isSimplifiedMode ? (
+                <>
+                  <Zap className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+                  <span>Quick Capture Active • Ready to Snap</span>
+                </>
+              ) : detection.detected ? (
                 <>
                   <Sparkles className="w-3.5 h-3.5 text-[#00FF66] animate-pulse" />
                   <span>Face Detected • Ready</span>
@@ -562,12 +609,35 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
             </div>
           </div>
 
+          {/* Quick Capture Mode Badge & Switcher */}
+          <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                const nextMode = !isSimplifiedMode;
+                setIsSimplifiedMode(nextMode);
+                if (nextMode) {
+                  faceDetectorWorkerManager.activateSimplifiedFallback('User selected Quick Capture');
+                }
+              }}
+              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-all flex items-center gap-1 backdrop-blur-md cursor-pointer ${
+                isSimplifiedMode
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                  : 'bg-black/60 text-slate-300 border-white/20 hover:bg-black/80'
+              }`}
+              title="Toggle between AI Face Detection and Simplified Quick Capture"
+            >
+              <Zap className="w-3 h-3 text-amber-400" />
+              <span>{isSimplifiedMode ? 'Quick Capture' : 'AI Detector'}</span>
+            </button>
+          </div>
+
           {/* Camera switch button */}
           <button
             id="btn-switch-camera"
             type="button"
             onClick={toggleCamera}
-            className="absolute top-3 right-3 p-2.5 rounded-full bg-black/60 text-white border border-white/20 hover:bg-black/80 transition-all backdrop-blur-sm z-10"
+            className="absolute top-3 right-3 p-2.5 rounded-full bg-black/60 text-white border border-white/20 hover:bg-black/80 transition-all backdrop-blur-sm z-10 cursor-pointer"
             aria-label="Switch camera"
           >
             <SwitchCamera className="w-4 h-4" />
@@ -578,10 +648,10 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
             <button
               id="btn-capture-face"
               type="button"
-              disabled={!detection.detected || disabled || isCapturing}
+              disabled={(!detection.detected && !isSimplifiedMode) || disabled || isCapturing}
               onClick={handleCapture}
-              className={`w-full max-w-xs py-3 px-4 rounded-xl font-bold text-xs flex items-center justify-center space-x-2 transition-all ${
-                detection.detected && !disabled
+              className={`w-full max-w-xs py-3 px-4 rounded-xl font-bold text-xs flex items-center justify-center space-x-2 transition-all cursor-pointer ${
+                (detection.detected || isSimplifiedMode) && !disabled
                   ? 'bg-[#00FF66] text-[#0a0c10] shadow-[0_0_20px_rgba(0,255,102,0.4)] hover:bg-[#00e55b] active:scale-[0.98]'
                   : 'bg-[#18202d]/80 text-slate-500 border border-slate-700/60 cursor-not-allowed'
               }`}
@@ -589,9 +659,11 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
               <Camera className="w-4 h-4" />
               <span>
                 {isCapturing
-                  ? 'Verifying...'
+                  ? 'Verifying & Compressing...'
                   : disabled
                   ? 'Geofence check pending...'
+                  : isSimplifiedMode
+                  ? 'Take Verification Snapshot'
                   : detection.detected
                   ? 'Capture & Verify Face'
                   : 'Position Face in Oval to Capture'}

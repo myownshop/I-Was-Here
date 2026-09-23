@@ -49,6 +49,9 @@ export interface Campaign {
   shortCode: string; // 5 alphanumeric characters, e.g. xyz12
   timeBlocks?: TimeBlock[];
   createdAt: string;
+  status?: 'active' | 'closed';
+  isClosed?: boolean;
+  closedAt?: string;
 }
 
 export interface Attendee {

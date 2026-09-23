@@ -8,12 +8,14 @@ import {
   ShieldCheck,
   RefreshCw,
   QrCode,
-  Sparkles,
   Building2,
   LogOut,
   Sliders,
   Download,
   Settings,
+  History,
+  Lock,
+  ArrowLeft,
 } from 'lucide-react';
 import { Campaign, Attendee, Organization } from '../../types/attendance';
 import { CampaignQRCard } from './CampaignQRCard';
@@ -23,11 +25,15 @@ import { CreateCampaignModal } from './CreateCampaignModal';
 import { PhotoAuditModal } from './PhotoAuditModal';
 import { OfflineDataImporter } from './OfflineDataImporter';
 import { OrganizationSettings } from './OrganizationSettings';
+import { CloseSessionModal } from './CloseSessionModal';
+import { SessionHistoryView } from './SessionHistoryView';
 import { exportAttendeesToCsv } from '../../utils/csvExport';
 import {
   getCampaignsForOrg,
   getAllCampaigns,
   getCampaignAttendees,
+  closeCampaign,
+  reopenCampaign,
 } from '../../services/firebase';
 import { formatDistance } from '../../utils/geo';
 import { showToast } from '../common/Toast';
@@ -37,7 +43,7 @@ interface AdminPortalProps {
   onLaunchAttendeeFlow: (campaign: Campaign) => void;
   onSignOut?: () => void;
   onNavigateToAuth?: () => void;
-  initialTab?: 'sessions' | 'settings';
+  initialTab?: 'active' | 'history' | 'settings' | 'sessions';
   isFirstSetup?: boolean;
   onOrganizationUpdated?: (updated: Organization) => void;
 }
@@ -47,12 +53,13 @@ export function AdminPortal({
   onLaunchAttendeeFlow,
   onSignOut,
   onNavigateToAuth,
-  initialTab = 'sessions',
+  initialTab = 'active',
   isFirstSetup = false,
   onOrganizationUpdated,
 }: AdminPortalProps) {
+  const normalizedInitialTab = initialTab === 'sessions' ? 'active' : initialTab;
   const [activeOrg, setActiveOrg] = useState<Organization | null>(currentOrg);
-  const [activeTab, setActiveTab] = useState<'sessions' | 'settings'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'active' | 'history' | 'settings'>(normalizedInitialTab);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [selectedCampaignId, setSelectedCampaignId] = useState<string>('');
   const [attendees, setAttendees] = useState<Attendee[]>([]);
@@ -65,6 +72,8 @@ export function AdminPortal({
 
   // Modals
   const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(false);
+  const [closeModalCampaign, setCloseModalCampaign] = useState<Campaign | null>(null);
+  const [isClosingSession, setIsClosingSession] = useState<boolean>(false);
   const [auditAttendee, setAuditAttendee] = useState<Attendee | null>(null);
 
   // Synchronize activeOrg if currentOrg prop updates
@@ -77,9 +86,18 @@ export function AdminPortal({
   // Synchronize initialTab if provided
   useEffect(() => {
     if (initialTab) {
-      setActiveTab(initialTab);
+      setActiveTab(initialTab === 'sessions' ? 'active' : initialTab);
     }
   }, [initialTab]);
+
+  // Split campaigns into Active vs Closed History
+  const activeCampaigns = useMemo(() => {
+    return campaigns.filter((c) => c.status !== 'closed' && !c.isClosed);
+  }, [campaigns]);
+
+  const historyCampaigns = useMemo(() => {
+    return campaigns.filter((c) => c.status === 'closed' || c.isClosed);
+  }, [campaigns]);
 
   // Load campaigns for current tenant
   const loadCampaigns = useCallback(async () => {
@@ -91,7 +109,11 @@ export function AdminPortal({
       }
       setCampaigns(list);
 
-      if (list.length > 0 && (!selectedCampaignId || !list.some((c) => c.id === selectedCampaignId))) {
+      // Auto-select first active campaign if none selected or if selected is missing
+      const activeList = list.filter((c) => c.status !== 'closed' && !c.isClosed);
+      if (activeList.length > 0 && (!selectedCampaignId || !list.some((c) => c.id === selectedCampaignId))) {
+        setSelectedCampaignId(activeList[0].id);
+      } else if (list.length > 0 && !selectedCampaignId) {
         setSelectedCampaignId(list[0].id);
       }
     } catch (err) {
@@ -133,8 +155,8 @@ export function AdminPortal({
   }, [selectedCampaignId, loadAttendees]);
 
   const selectedCampaign = useMemo(() => {
-    return campaigns.find((c) => c.id === selectedCampaignId) || campaigns[0] || null;
-  }, [campaigns, selectedCampaignId]);
+    return campaigns.find((c) => c.id === selectedCampaignId) || activeCampaigns[0] || campaigns[0] || null;
+  }, [campaigns, selectedCampaignId, activeCampaigns]);
 
   // Filtered Attendees list (by Search Query and Date)
   const filteredAttendees = useMemo(() => {
@@ -187,7 +209,69 @@ export function AdminPortal({
   const handleCampaignCreated = (newCamp: Campaign) => {
     setCampaigns((prev) => [newCamp, ...prev]);
     setSelectedCampaignId(newCamp.id);
-    setActiveTab('sessions');
+    setActiveTab('active');
+  };
+
+  // Close / End Session Logic
+  const handleConfirmCloseSession = async () => {
+    if (!closeModalCampaign) return;
+    setIsClosingSession(true);
+
+    try {
+      const updated = await closeCampaign(closeModalCampaign.id);
+
+      // Update campaigns state
+      setCampaigns((prev) =>
+        prev.map((c) => (c.id === updated.id ? updated : c))
+      );
+
+      // Remove from active dropdown and pick the next available active session
+      const remainingActive = activeCampaigns.filter((c) => c.id !== closeModalCampaign.id);
+      if (remainingActive.length > 0) {
+        setSelectedCampaignId(remainingActive[0].id);
+      } else {
+        setSelectedCampaignId('');
+      }
+
+      setCloseModalCampaign(null);
+      showToast(
+        'success',
+        `Session "${updated.name}" was ended and moved to History.`,
+        'Session Closed'
+      );
+    } catch (err) {
+      console.error('Error closing session:', err);
+      showToast('error', 'Failed to close session.', 'Error');
+    } finally {
+      setIsClosingSession(false);
+    }
+  };
+
+  // Re-open a session from history
+  const handleReopenSession = async (campaignToReopen: Campaign) => {
+    try {
+      const updated = await reopenCampaign(campaignToReopen.id);
+
+      setCampaigns((prev) =>
+        prev.map((c) => (c.id === updated.id ? updated : c))
+      );
+
+      setSelectedCampaignId(updated.id);
+      setActiveTab('active');
+      showToast(
+        'success',
+        `Session "${updated.name}" has been reactivated and added to Active Roll Call.`,
+        'Session Reopened'
+      );
+    } catch (err) {
+      console.error('Error reopening session:', err);
+      showToast('error', 'Failed to reopen session.', 'Error');
+    }
+  };
+
+  const handleInspectHistoryRoster = (camp: Campaign) => {
+    setSelectedCampaignId(camp.id);
+    setActiveTab('active');
   };
 
   const handleExportAttendance = () => {
@@ -224,6 +308,7 @@ export function AdminPortal({
   };
 
   const accentColor = activeOrg?.accentColor || '#00FF66';
+  const isSelectedClosed = selectedCampaign ? (selectedCampaign.status === 'closed' || selectedCampaign.isClosed) : false;
 
   if (!activeOrg) {
     return (
@@ -305,8 +390,8 @@ export function AdminPortal({
         </div>
 
         <div className="flex items-center space-x-2.5 flex-wrap">
-          {/* Campaign Selector dropdown if multiple */}
-          {activeTab === 'sessions' && campaigns.length > 1 && (
+          {/* Active Session Selector dropdown: Lists ONLY active sessions */}
+          {activeTab === 'active' && activeCampaigns.length > 1 && !isSelectedClosed && (
             <select
               id="select-active-campaign"
               value={selectedCampaignId}
@@ -314,7 +399,7 @@ export function AdminPortal({
               aria-label="Select active campaign"
               className="bg-[#141b27] border border-[#243144] text-xs font-semibold text-white py-2.5 px-3 rounded-xl outline-none focus:border-[#00FF66] max-w-[200px] truncate"
             >
-              {campaigns.map((c) => (
+              {activeCampaigns.map((c) => (
                 <option key={c.id} value={c.id} className="bg-[#0d121b]">
                   {c.name} ({c.shortCode})
                 </option>
@@ -322,8 +407,23 @@ export function AdminPortal({
             </select>
           )}
 
-          {activeTab === 'sessions' && (
+          {activeTab === 'active' && (
             <>
+              {/* Close Session Button in top bar */}
+              {selectedCampaign && !isSelectedClosed && (
+                <button
+                  id="btn-close-active-session"
+                  type="button"
+                  onClick={() => setCloseModalCampaign(selectedCampaign)}
+                  className="py-2.5 px-3.5 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 hover:text-white border border-rose-800/60 text-xs font-bold flex items-center space-x-1.5 shadow-sm transition-all active:scale-95 cursor-pointer"
+                  title="End and close this session (move to History)"
+                >
+                  <Lock className="w-3.5 h-3.5 text-rose-400" />
+                  <span className="hidden sm:inline">Close Session</span>
+                  <span className="sm:hidden">Close</span>
+                </button>
+              )}
+
               <button
                 id="btn-export-attendance"
                 type="button"
@@ -362,27 +462,6 @@ export function AdminPortal({
             </>
           )}
 
-          {/* Quick tab toggle button */}
-          <button
-            id="btn-toggle-portal-tab"
-            type="button"
-            onClick={() => setActiveTab(activeTab === 'sessions' ? 'settings' : 'sessions')}
-            className="py-2.5 px-3.5 rounded-xl bg-[#141b27] hover:bg-[#1c2637] text-slate-200 hover:text-white border border-[#243144] text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer"
-            title={activeTab === 'sessions' ? 'Go to Profile & Settings' : 'Go to Sessions Dashboard'}
-          >
-            {activeTab === 'sessions' ? (
-              <>
-                <Settings className="w-3.5 h-3.5" style={{ color: accentColor }} />
-                <span>Settings</span>
-              </>
-            ) : (
-              <>
-                <QrCode className="w-3.5 h-3.5" style={{ color: accentColor }} />
-                <span>Roll Call</span>
-              </>
-            )}
-          </button>
-
           {onSignOut ? (
             <button
               id="btn-admin-signout"
@@ -407,26 +486,58 @@ export function AdminPortal({
         </div>
       </div>
 
-      {/* Tab Navigation Navigation Bar */}
-      <div className="flex items-center space-x-2 border-b border-[#1b2332] pb-3">
+      {/* Main Tab Navigation Bar: Active Sessions | History | Profile & Settings */}
+      <div className="flex items-center space-x-2 border-b border-[#1b2332] pb-3 overflow-x-auto">
         <button
-          id="tab-btn-sessions"
+          id="tab-btn-active-sessions"
           type="button"
-          onClick={() => setActiveTab('sessions')}
-          className={`py-2 px-4 rounded-xl text-xs font-bold flex items-center space-x-2 transition-all cursor-pointer ${
-            activeTab === 'sessions'
+          onClick={() => {
+            setActiveTab('active');
+            // If currently viewing a closed session, switch to the first active campaign
+            if (isSelectedClosed && activeCampaigns.length > 0) {
+              setSelectedCampaignId(activeCampaigns[0].id);
+            }
+          }}
+          className={`py-2 px-4 rounded-xl text-xs font-bold flex items-center space-x-2 transition-all cursor-pointer whitespace-nowrap ${
+            activeTab === 'active' && !isSelectedClosed
               ? 'text-[#0a0c10] shadow-md'
               : 'text-slate-400 hover:text-white bg-[#0e141f] border border-[#1e2738]'
           }`}
-          style={activeTab === 'sessions' ? { backgroundColor: accentColor } : {}}
+          style={activeTab === 'active' && !isSelectedClosed ? { backgroundColor: accentColor } : {}}
         >
-          <QrCode className={`w-3.5 h-3.5 ${activeTab === 'sessions' ? 'text-black' : ''}`} />
-          <span>Roll Call Sessions &amp; Roster</span>
-          {campaigns.length > 0 && (
-            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono font-black ${
-              activeTab === 'sessions' ? 'bg-black/25 text-black' : 'bg-[#182232] text-slate-300'
-            }`}>
-              {campaigns.length}
+          <QrCode className={`w-3.5 h-3.5 ${activeTab === 'active' && !isSelectedClosed ? 'text-black' : ''}`} />
+          <span>Active Roll Call</span>
+          {activeCampaigns.length > 0 && (
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono font-black ${
+                activeTab === 'active' && !isSelectedClosed ? 'bg-black/25 text-black' : 'bg-[#182232] text-[#00FF66]'
+              }`}
+            >
+              {activeCampaigns.length}
+            </span>
+          )}
+        </button>
+
+        <button
+          id="tab-btn-session-history"
+          type="button"
+          onClick={() => setActiveTab('history')}
+          className={`py-2 px-4 rounded-xl text-xs font-bold flex items-center space-x-2 transition-all cursor-pointer whitespace-nowrap ${
+            activeTab === 'history'
+              ? 'text-[#0a0c10] shadow-md'
+              : 'text-slate-400 hover:text-white bg-[#0e141f] border border-[#1e2738]'
+          }`}
+          style={activeTab === 'history' ? { backgroundColor: accentColor } : {}}
+        >
+          <History className={`w-3.5 h-3.5 ${activeTab === 'history' ? 'text-black' : ''}`} />
+          <span>Session History</span>
+          {historyCampaigns.length > 0 && (
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono font-black ${
+                activeTab === 'history' ? 'bg-black/25 text-black' : 'bg-[#182232] text-slate-300'
+              }`}
+            >
+              {historyCampaigns.length}
             </span>
           )}
         </button>
@@ -435,14 +546,14 @@ export function AdminPortal({
           id="tab-btn-settings"
           type="button"
           onClick={() => setActiveTab('settings')}
-          className={`py-2 px-4 rounded-xl text-xs font-bold flex items-center space-x-2 transition-all cursor-pointer ${
+          className={`py-2 px-4 rounded-xl text-xs font-bold flex items-center space-x-2 transition-all cursor-pointer whitespace-nowrap ${
             activeTab === 'settings'
               ? 'text-[#0a0c10] shadow-md'
               : 'text-slate-400 hover:text-white bg-[#0e141f] border border-[#1e2738]'
           }`}
           style={activeTab === 'settings' ? { backgroundColor: accentColor } : {}}
         >
-          <Sliders className={`w-3.5 h-3.5 ${activeTab === 'settings' ? 'text-black' : ''}`} />
+          <Settings className={`w-3.5 h-3.5 ${activeTab === 'settings' ? 'text-black' : ''}`} />
           <span>Profile &amp; Settings</span>
         </button>
       </div>
@@ -458,17 +569,65 @@ export function AdminPortal({
           }}
           isFirstSetup={isFirstSetup}
           onCompleteSetup={() => {
-            setActiveTab('sessions');
+            setActiveTab('active');
             loadCampaigns();
           }}
         />
       )}
 
-      {/* Tab 2: Sessions & Roll Call */}
-      {activeTab === 'sessions' && (
+      {/* Tab 2: Session History */}
+      {activeTab === 'history' && (
+        <SessionHistoryView
+          closedCampaigns={historyCampaigns}
+          organization={activeOrg}
+          accentColor={accentColor}
+          onSelectCampaignForRoster={handleInspectHistoryRoster}
+          onReopenCampaign={handleReopenSession}
+        />
+      )}
+
+      {/* Tab 3: Active Roll Call Sessions & Roster */}
+      {activeTab === 'active' && (
         <div className="space-y-6">
-          {/* Empty State when no campaigns exist */}
-          {campaigns.length === 0 ? (
+          {/* Banner if inspecting a Closed session from history */}
+          {isSelectedClosed && selectedCampaign && (
+            <div className="bg-slate-900 border border-slate-700 rounded-2xl p-4 flex items-center justify-between gap-3 text-slate-200">
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('history')}
+                  className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors cursor-pointer"
+                  title="Return to History"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
+                <div>
+                  <h4 className="font-extrabold text-white text-sm flex items-center gap-2">
+                    <span>Archived Session: {selectedCampaign.name}</span>
+                    <span className="text-[10px] bg-slate-800 px-2 py-0.5 rounded-full border border-slate-600 font-mono">
+                      CLOSED
+                    </span>
+                  </h4>
+                  <p className="text-xs text-slate-400">
+                    Viewing past session records. This session is ended and removed from active drop down.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleReopenSession(selectedCampaign)}
+                  className="px-3 py-1.5 rounded-xl bg-[#00FF66] text-[#0a0c10] text-xs font-bold hover:bg-[#00e55b] transition-all cursor-pointer"
+                >
+                  Reopen Session
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Empty State when no active campaigns exist */}
+          {activeCampaigns.length === 0 && !isSelectedClosed ? (
             <div className="bg-[#0e141f] border border-[#1e2738] rounded-3xl p-8 sm:p-12 text-center space-y-4 shadow-xl">
               <div
                 className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto shadow-inner"
@@ -477,10 +636,11 @@ export function AdminPortal({
                 <QrCode className="w-8 h-8" />
               </div>
               <div className="space-y-1">
-                <h3 className="text-xl font-black text-white">No Roll Call Sessions Active</h3>
+                <h3 className="text-xl font-black text-white">No Active Roll Call Sessions</h3>
                 <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
-                  Start by launching your first attendance session to generate an encrypted QR code,
-                  a short code, and a strict physical geofence for your members.
+                  {historyCampaigns.length > 0
+                    ? `You have ${historyCampaigns.length} completed session(s) in History. Launch a new session when your next CDS meeting begins.`
+                    : 'Start by launching your first attendance session to generate an encrypted QR code and geofence.'}
                 </p>
               </div>
               <div className="pt-3 flex flex-wrap justify-center gap-3">
@@ -492,26 +652,32 @@ export function AdminPortal({
                   style={{ backgroundColor: accentColor }}
                 >
                   <Plus className="w-4 h-4 text-black" />
-                  <span>Create First Session</span>
+                  <span>Create New Session</span>
                 </button>
-                <button
-                  id="btn-go-to-settings"
-                  type="button"
-                  onClick={() => setActiveTab('settings')}
-                  className="py-3 px-5 rounded-xl font-bold text-xs text-slate-300 bg-[#141b27] hover:bg-[#1f2838] border border-[#27344a] flex items-center space-x-2 cursor-pointer transition-all"
-                >
-                  <Sliders className="w-4 h-4" />
-                  <span>Configure Organization Profile</span>
-                </button>
+
+                {historyCampaigns.length > 0 && (
+                  <button
+                    id="btn-view-history"
+                    type="button"
+                    onClick={() => setActiveTab('history')}
+                    className="py-3 px-5 rounded-xl font-bold text-xs text-slate-300 bg-[#141b27] hover:bg-[#1f2838] border border-[#27344a] flex items-center space-x-2 cursor-pointer transition-all"
+                  >
+                    <History className="w-4 h-4" />
+                    <span>View Past Session History ({historyCampaigns.length})</span>
+                  </button>
+                )}
               </div>
             </div>
           ) : (
             <>
-              {/* Featured QR & Short Link Card with Share button */}
+              {/* Featured QR & Short Link Card with Close Session Button */}
               {selectedCampaign && (
                 <CampaignQRCard
                   campaign={selectedCampaign}
                   onOpenSession={() => onLaunchAttendeeFlow(selectedCampaign)}
+                  onCloseSession={() => setCloseModalCampaign(selectedCampaign)}
+                  onReopenSession={() => handleReopenSession(selectedCampaign)}
+                  isHistoryMode={isSelectedClosed}
                   accentColor={accentColor}
                 />
               )}
@@ -633,7 +799,7 @@ export function AdminPortal({
                       <button
                         type="button"
                         onClick={() => setSelectedDate('')}
-                        className="text-[10px] text-rose-400 hover:underline"
+                        className="text-[10px] text-rose-400 hover:underline cursor-pointer"
                       >
                         Clear
                       </button>
@@ -686,7 +852,7 @@ export function AdminPortal({
                     <p className="text-xs text-slate-400 max-w-sm mx-auto mb-5 leading-relaxed">
                       Have members scan the session QR code or upload offline .iwh files to verify presence.
                     </p>
-                    {selectedCampaign && (
+                    {selectedCampaign && !isSelectedClosed && (
                       <button
                         type="button"
                         onClick={() => onLaunchAttendeeFlow(selectedCampaign)}
@@ -712,6 +878,16 @@ export function AdminPortal({
         onClose={() => setIsCreateModalOpen(false)}
         onCampaignCreated={handleCampaignCreated}
         organization={activeOrg}
+      />
+
+      {/* Close Session Confirmation Modal */}
+      <CloseSessionModal
+        isOpen={Boolean(closeModalCampaign)}
+        campaign={closeModalCampaign}
+        attendeeCount={attendees.length}
+        onClose={() => setCloseModalCampaign(null)}
+        onConfirmClose={handleConfirmCloseSession}
+        isProcessing={isClosingSession}
       />
 
       {/* Photo Audit Zoom Modal */}
