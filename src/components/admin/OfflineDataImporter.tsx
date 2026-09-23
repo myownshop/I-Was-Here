@@ -53,34 +53,26 @@ export function OfflineDataImporter({
     if (!files || files.length === 0) return;
 
     setIsProcessing(true);
-    const results: ImportItemStatus[] = [];
-    let successCount = 0;
-    let tamperedCount = 0;
+    const fileArray = Array.from(files);
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
+    const importPromises = fileArray.map(async (file): Promise<ImportItemStatus> => {
       if (!file.name.endsWith('.iwh')) {
-        results.push({
+        return {
           filename: file.name,
           status: 'error',
           message: 'Ignored: Only encrypted .iwh files are supported.',
-        });
-        continue;
+        };
       }
 
       try {
         const fileContent = await file.text();
-        // 1. Decrypt and verify AES-GCM payload
+        // 1. Decrypt and verify AES payload fast
         const record = await decryptOfflineRecord(fileContent);
 
         // 2. Validate and import into Firestore
         const outcome = await importOfflineIwhRecord(record, campaign);
 
-        if (outcome.isTampered) {
-          tamperedCount++;
-        }
-
-        results.push({
+        return {
           filename: file.name,
           stateCode: record.stateCode,
           name: record.name,
@@ -90,17 +82,20 @@ export function OfflineDataImporter({
           isTampered: outcome.isTampered,
           isLate: outcome.isLate,
           timeBlockCode: record.timeBlockCode,
-        });
-        successCount++;
+        };
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : 'Decryption or verification failed.';
-        results.push({
+        return {
           filename: file.name,
           status: 'error',
           message: errMsg,
-        });
+        };
       }
-    }
+    });
+
+    const results = await Promise.all(importPromises);
+    const successCount = results.filter((r) => r.status === 'success').length;
+    const tamperedCount = results.filter((r) => r.isTampered).length;
 
     setImportResults((prev) => [...results, ...prev]);
     setIsProcessing(false);
