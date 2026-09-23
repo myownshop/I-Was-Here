@@ -46,42 +46,19 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [capturedPreview, setCapturedPreview] = useState<CompressionResult | null>(null);
 
-  // Worker status and simplified fallback state
+  // Worker status and AI Detector mode state (AI Detector is active by default)
   const [workerStatus, setWorkerStatus] = useState<DetectorWorkerStatus>(() =>
     faceDetectorWorkerManager.getStatus()
   );
-  const [isSimplifiedMode, setIsSimplifiedMode] = useState<boolean>(() =>
-    faceDetectorWorkerManager.getStatus().isSimplifiedFallback
-  );
+  const [isSimplifiedMode, setIsSimplifiedMode] = useState<boolean>(false);
 
   // Subscribe to worker status updates
   useEffect(() => {
     const unsubscribe = faceDetectorWorkerManager.subscribeStatus((status) => {
       setWorkerStatus(status);
-      if (status.isSimplifiedFallback) {
-        setIsSimplifiedMode(true);
-      }
     });
     return unsubscribe;
   }, []);
-
-  // 3-Second Detection Timeout: If camera is running and face is not recognized within 3 seconds,
-  // automatically offer/enable simplified quick-capture fallback to prevent user blockage.
-  useEffect(() => {
-    if (inputMode !== 'camera' || permissionState !== 'granted' || capturedPreview || isSimplifiedMode) {
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      if (!detection.detected) {
-        console.info('Detection pending > 3s: Enabling Quick Capture Mode fallback.');
-        setIsSimplifiedMode(true);
-        faceDetectorWorkerManager.activateSimplifiedFallback('3s timeout fallback activated');
-      }
-    }, 3000);
-
-    return () => clearTimeout(timer);
-  }, [inputMode, permissionState, capturedPreview, detection.detected, isSimplifiedMode]);
 
   // Initialize camera stream with progressive fallback
   const startCamera = useCallback(async (mode: 'user' | 'environment') => {
@@ -589,10 +566,10 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
             {/* Live Guidance Status Badge */}
             <div
               id="detection-guidance-badge"
-              className={`mt-3 px-3 py-1 rounded-full text-xs font-semibold flex items-center space-x-1.5 transition-all backdrop-blur-md ${
+              className={`mt-3 px-3.5 py-1.5 rounded-full text-xs font-semibold flex items-center space-x-2 transition-all backdrop-blur-md ${
                 detection.detected || isSimplifiedMode
-                  ? 'bg-[#00FF66]/20 text-[#00FF66] border border-[#00FF66]/40 shadow-[0_0_15px_rgba(0,255,102,0.2)]'
-                  : 'bg-black/60 text-slate-300 border border-slate-700'
+                  ? 'bg-[#00FF66]/20 text-[#00FF66] border border-[#00FF66]/40 shadow-[0_0_15px_rgba(0,255,102,0.25)]'
+                  : 'bg-black/75 text-slate-300 border border-slate-700'
               }`}
             >
               {isSimplifiedMode ? (
@@ -603,7 +580,7 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
               ) : detection.detected ? (
                 <>
                   <Sparkles className="w-3.5 h-3.5 text-[#00FF66] animate-pulse" />
-                  <span>Face Detected • Ready</span>
+                  <span>AI Face &amp; Liveness Locked ({Math.round(detection.confidence * 100)}%) • Ready</span>
                 </>
               ) : (
                 <span>{detection.message}</span>

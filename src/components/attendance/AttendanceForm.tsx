@@ -424,10 +424,33 @@ export function AttendanceForm({
         throw new Error('Firestore write failed to return confirmed attendee document.');
       }
 
+      // Auto-generate and download .iwh encrypted backup alongside online submission
+      try {
+        const backupRecord: OfflineAttendanceRecord = {
+          name: name.trim(),
+          stateCode: stateCode.trim().toUpperCase(),
+          timeBlockCode: cleanTimeBlock || undefined,
+          campaignId: campaign.id,
+          orgId: campaign.orgId || '',
+          timestamp,
+          latitude: lat,
+          longitude: lng,
+          distanceMeters: currentDistance,
+          base64Image: capturedPhoto.dataUrl,
+          version: '1.0',
+          tampered: isTampered,
+        };
+        const encrypted = await encryptOfflineRecord(backupRecord);
+        const downloadedName = downloadIwhFile(encrypted);
+        setOfflineFilename(downloadedName);
+      } catch (iwhErr) {
+        console.warn('Optional automatic .iwh download notice:', iwhErr);
+      }
+
       // Strictly trigger success UI only AFTER confirmed write
       setIsOfflinePackage(false);
       setCompletedAttendee(newAttendee);
-      showToast('success', 'Attendance and biometrics logged successfully!', 'Verified');
+      showToast('success', 'Attendance & biometrics saved to cloud & .iwh downloaded!', 'Verified');
     } catch (err) {
       console.warn('Online submission failed, falling back to IndexedDB local serialization:', err);
       // Seamless auto-fallback to IndexedDB serialization and encrypted .iwh backup
@@ -502,6 +525,50 @@ export function AttendanceForm({
     }
   };
 
+  const handleDownloadIwhOnly = async () => {
+    if (!name.trim()) {
+      showToast('warning', 'Please enter your full name first.', 'Name Required');
+      return;
+    }
+    if (!isValidStateCode(stateCode)) {
+      showToast('warning', 'Please enter a valid NYSC State Code (e.g. LA/24A/1234).', 'State Code Required');
+      return;
+    }
+    if (!capturedPhoto) {
+      showToast('warning', 'Please capture your face verification photo before downloading.', 'Photo Required');
+      return;
+    }
+
+    try {
+      const isTampered = isTamperingDetected();
+      const timestamp = new Date().toISOString();
+      const lat = currentCoords ? currentCoords.latitude : campaign?.targetLatitude || 0;
+      const lng = currentCoords ? currentCoords.longitude : campaign?.targetLongitude || 0;
+
+      const offlineRecord: OfflineAttendanceRecord = {
+        name: name.trim(),
+        stateCode: stateCode.trim().toUpperCase(),
+        timeBlockCode: timeBlockCode.trim().toUpperCase() || undefined,
+        campaignId: campaign?.id || 'manual_session',
+        orgId: campaign?.orgId || organization?.id || '',
+        timestamp,
+        latitude: lat,
+        longitude: lng,
+        distanceMeters: currentDistance || 0,
+        base64Image: capturedPhoto.dataUrl,
+        version: '1.0',
+        tampered: isTampered,
+      };
+
+      const encrypted = await encryptOfflineRecord(offlineRecord);
+      const downloadedName = downloadIwhFile(encrypted);
+      showToast('success', `Encrypted attendance file ${downloadedName} downloaded!`, 'Downloaded .iwh');
+    } catch (err) {
+      console.error('Download error:', err);
+      showToast('error', 'Failed to generate .iwh file. Please retry.', 'Error');
+    }
+  };
+
   const handleReset = () => {
     setCompletedAttendee(null);
     setIsOfflinePackage(false);
@@ -512,6 +579,32 @@ export function AttendanceForm({
     setCapturedPhoto(null);
     setNameError('');
     setStateCodeError('');
+  };
+
+  const handleRedownloadIwhFromSuccess = async () => {
+    if (!completedAttendee || !campaign) return;
+    try {
+      const offlineRecord: OfflineAttendanceRecord = {
+        name: completedAttendee.name,
+        stateCode: completedAttendee.stateCode,
+        timeBlockCode: completedAttendee.timeBlockCode,
+        campaignId: campaign.id,
+        orgId: campaign.orgId || '',
+        timestamp: completedAttendee.timestamp,
+        latitude: completedAttendee.latitude,
+        longitude: completedAttendee.longitude,
+        distanceMeters: completedAttendee.distanceMeters,
+        base64Image: completedAttendee.photoUrl,
+        version: '1.0',
+        tampered: completedAttendee.tampered,
+      };
+      const encrypted = await encryptOfflineRecord(offlineRecord);
+      const downloadedName = downloadIwhFile(encrypted);
+      showToast('success', `Encrypted attendance file ${downloadedName} downloaded!`, 'Downloaded .iwh');
+    } catch (err) {
+      console.error('Re-download error:', err);
+      showToast('error', 'Failed to generate .iwh file.', 'Error');
+    }
   };
 
   // If completed, display prominent success certificate screen
@@ -526,6 +619,7 @@ export function AttendanceForm({
         offlineFilename={offlineFilename}
         durationSeconds={savingElapsedSeconds}
         onReset={handleReset}
+        onRedownloadIwh={handleRedownloadIwhFromSuccess}
       />
     );
   }
@@ -892,6 +986,25 @@ export function AttendanceForm({
               )}
             </button>
 
+            {/* Standalone Download .iwh Button */}
+            {!forceOfflineMode && (
+              <button
+                id="btn-download-iwh-standalone"
+                type="button"
+                onClick={handleDownloadIwhOnly}
+                disabled={!name.trim() || !isValidStateCode(stateCode) || !capturedPhoto}
+                className={`w-full mt-2.5 py-3 px-4 rounded-xl font-bold text-xs flex items-center justify-center space-x-2 transition-all cursor-pointer ${
+                  name.trim() && isValidStateCode(stateCode) && capturedPhoto
+                    ? 'bg-[#141c28] text-slate-200 border border-[#2b3a50] hover:bg-[#1a2536] hover:border-emerald-500/50 hover:text-white'
+                    : 'bg-[#0f141e] text-slate-600 border border-[#1a2230] cursor-not-allowed'
+                }`}
+              >
+                <Lock className="w-3.5 h-3.5 text-amber-400" />
+                <span>Download Verified Attendance (.iwh File)</span>
+                <Download className="w-3.5 h-3.5 text-slate-400" />
+              </button>
+            )}
+
             {/* Explanatory notes under submit */}
             <div className="mt-2 text-center">
               {!isWithinGeofence && currentDistance !== null ? (
@@ -908,7 +1021,7 @@ export function AttendanceForm({
                 </p>
               ) : (
                 <p className="text-[11px] font-medium" style={{ color: accentColor }}>
-                  ✓ All verification parameters satisfied. Tap above to log attendance.
+                  ✓ Submitting CDS Attendance automatically logs to cloud and downloads your verified <code className="font-mono bg-black/40 px-1 py-0.5 rounded">.iwh</code> backup.
                 </p>
               )}
             </div>

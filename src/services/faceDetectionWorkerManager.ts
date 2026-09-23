@@ -52,18 +52,8 @@ class FaceDetectionWorkerManager {
     this.startTime = performance.now();
 
     this.initializationPromise = new Promise<void>((resolve) => {
-      // 3.0 Second strict timeout guard for MediaPipe/Worker loading
-      const fallbackTimer = setTimeout(() => {
-        if (!this.isInitialized) {
-          console.warn('Face detector initialization exceeded 3.0s threshold. Switching immediately to Simplified Capture Mode.');
-          this.activateSimplifiedFallback('Detector initialization timed out (3s). Simplified capture mode active.');
-          resolve();
-        }
-      }, 3000);
-
       try {
         if (typeof window === 'undefined' || typeof Worker === 'undefined') {
-          clearTimeout(fallbackTimer);
           this.activateSimplifiedFallback('Web Workers not supported in this environment.');
           resolve();
           return;
@@ -89,20 +79,18 @@ class FaceDetectionWorkerManager {
         };
 
         this.worker.onerror = (err) => {
-          console.warn('Face detection worker runtime error, falling back to simplified mode:', err);
-          this.activateSimplifiedFallback('Worker runtime error.');
+          console.warn('Face detection worker notice:', err);
         };
 
-        clearTimeout(fallbackTimer);
         this.isInitialized = true;
         this.isSimplifiedFallback = false;
         this.initDuration = performance.now() - this.startTime;
         this.notifyStatus();
         resolve();
       } catch (err) {
-        clearTimeout(fallbackTimer);
-        console.warn('Failed to spawn face detector worker, falling back to simplified mode:', err);
-        this.activateSimplifiedFallback(err instanceof Error ? err.message : 'Worker initialization failed');
+        console.warn('Worker initialization fallback to direct canvas detector:', err);
+        this.isInitialized = true;
+        this.isSimplifiedFallback = false;
         resolve();
       }
     });

@@ -223,38 +223,40 @@ export function AttendanceSuccessModal({
       </div>
 
       {/* Action Buttons */}
-      <div className="w-full flex flex-col sm:flex-row gap-3 mt-6">
-        {isOfflinePackage && onRedownloadIwh ? (
-          <button
-            id="btn-redownload-iwh"
-            type="button"
-            onClick={onRedownloadIwh}
-            className="flex-1 py-3 px-4 rounded-xl bg-[#17202d] hover:bg-[#1e293a] text-white border border-[#2b3950] text-xs font-bold flex items-center justify-center space-x-2 transition-all shadow-sm"
-          >
-            <Download className="w-4 h-4 text-amber-400" />
-            <span>Re-download .iwh</span>
-          </button>
-        ) : (
+      <div className="w-full flex flex-col gap-2.5 mt-6">
+        <div className="flex flex-col sm:flex-row gap-2.5 w-full">
+          {onRedownloadIwh && (
+            <button
+              id="btn-redownload-iwh"
+              type="button"
+              onClick={onRedownloadIwh}
+              className="flex-1 py-3 px-4 rounded-xl bg-[#17202d] hover:bg-[#1e293a] text-white border border-[#2b3950] text-xs font-bold flex items-center justify-center space-x-2 transition-all shadow-sm cursor-pointer"
+            >
+              <Download className="w-4 h-4 text-amber-400" />
+              <span>Re-download .iwh File</span>
+            </button>
+          )}
+
           <button
             id="btn-save-slip"
             type="button"
             onClick={handlePrintOrShare}
-            className="flex-1 py-3 px-4 rounded-xl bg-[#17202d] hover:bg-[#1e293a] text-white border border-[#2b3950] text-xs font-bold flex items-center justify-center space-x-2 transition-all shadow-sm"
+            className="flex-1 py-3 px-4 rounded-xl bg-[#17202d] hover:bg-[#1e293a] text-white border border-[#2b3950] text-xs font-bold flex items-center justify-center space-x-2 transition-all shadow-sm cursor-pointer"
           >
             <Download className="w-4 h-4" style={{ color: accentColor }} />
             <span>Save / Print Clearance</span>
           </button>
-        )}
+        </div>
 
         <button
           id="btn-submit-another"
           type="button"
           onClick={onReset}
-          className="flex-1 py-3 px-4 rounded-xl text-[#0a0c10] text-xs font-extrabold flex items-center justify-center space-x-2 transition-all shadow-md active:scale-95"
+          className="w-full py-3.5 px-4 rounded-xl text-[#0a0c10] text-xs font-black flex items-center justify-center space-x-2 transition-all shadow-md active:scale-95 cursor-pointer"
           style={{ backgroundColor: accentColor }}
         >
           <RefreshCw className="w-4 h-4 text-black" />
-          <span className="text-black">New Attendance</span>
+          <span className="text-black">New Attendance Session</span>
         </button>
       </div>
     </div>
