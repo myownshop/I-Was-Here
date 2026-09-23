@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, Navigation, MapPin, Calendar, Sparkles, Loader2, PlusCircle, Clock } from 'lucide-react';
 import { Campaign, Organization, TimeBlock } from '../../types/attendance';
 import { FloatingInput } from '../common/FloatingInput';
+import { GoogleMapsLinkInput } from '../common/GoogleMapsLinkInput';
 import { generateShortCode } from '../../utils/nysc';
 import { getCurrentCoordinates } from '../../utils/geo';
 import { createCampaign } from '../../services/firebase';
@@ -15,14 +16,6 @@ interface CreateCampaignModalProps {
   onCampaignCreated: (campaign: Campaign) => void;
   organization?: Organization | null;
 }
-
-// Preset venues in Nigeria for quick coordinator setup
-const VENUE_PRESETS = [
-  { name: 'NYSC Lagos Secretariat (Alausa, Ikeja)', lat: 6.6190, lng: 3.3580 },
-  { name: 'NYSC Abuja National Directorate (Maitama)', lat: 9.0833, lng: 7.4950 },
-  { name: 'NYSC Oyo State Secretariat (Agodi, Ibadan)', lat: 7.4019, lng: 3.9173 },
-  { name: 'NYSC Rivers State Secretariat (Port Harcourt)', lat: 4.8156, lng: 7.0498 },
-];
 
 export function CreateCampaignModal({
   isOpen,
@@ -40,10 +33,10 @@ export function CreateCampaignModal({
   const [name, setName] = useState<string>(defaultVenueTitle);
   const [date, setDate] = useState<string>(today);
   const [targetLat, setTargetLat] = useState<string>(
-    organization?.defaultLatitude !== undefined ? String(organization.defaultLatitude) : '6.5954'
+    organization?.defaultLatitude !== undefined ? String(organization.defaultLatitude) : ''
   );
   const [targetLng, setTargetLng] = useState<string>(
-    organization?.defaultLongitude !== undefined ? String(organization.defaultLongitude) : '3.3421'
+    organization?.defaultLongitude !== undefined ? String(organization.defaultLongitude) : ''
   );
   const [allowedRadius, setAllowedRadius] = useState<number>(organization?.defaultRadius || 100);
   const [shortCode, setShortCode] = useState<string>(generateShortCode());
@@ -99,10 +92,17 @@ export function CreateCampaignModal({
     }
   };
 
-  const handleApplyPreset = (preset: typeof VENUE_PRESETS[0]) => {
-    setTargetLat(preset.lat.toFixed(6));
-    setTargetLng(preset.lng.toFixed(6));
-    showToast('info', `Preset applied: ${preset.name}`, 'Venue Selected');
+  const handleGoogleMapsParsed = (coords: { latitude: number; longitude: number; venueName?: string }) => {
+    setTargetLat(coords.latitude.toFixed(6));
+    setTargetLng(coords.longitude.toFixed(6));
+    if (coords.venueName && (!name || name === defaultVenueTitle)) {
+      setName(coords.venueName);
+    }
+    showToast(
+      'success',
+      `Venue coordinates set to (${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)})`,
+      'Google Maps Venue Applied'
+    );
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -230,6 +230,16 @@ export function CreateCampaignModal({
               </button>
             </div>
 
+            {/* Paste Google Maps Link tool */}
+            <div className="p-3 bg-[#101622] rounded-xl border border-[#202c3e]">
+              <GoogleMapsLinkInput
+                onCoordinatesParsed={handleGoogleMapsParsed}
+                currentLat={targetLat}
+                currentLng={targetLng}
+                accentColor="#00FF66"
+              />
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-[10px] text-slate-400 font-mono block mb-1">Latitude</label>
@@ -254,23 +264,6 @@ export function CreateCampaignModal({
                   className="w-full py-2 px-3 rounded-lg bg-[#121721] border border-[#232d3d] text-xs font-mono text-white outline-none focus:border-[#00FF66]"
                   required
                 />
-              </div>
-            </div>
-
-            {/* Quick Presets */}
-            <div>
-              <span className="text-[10px] text-slate-500 block mb-1">Quick Presets:</span>
-              <div className="flex flex-wrap gap-1.5">
-                {VENUE_PRESETS.map((preset, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => handleApplyPreset(preset)}
-                    className="text-[10px] px-2 py-1 rounded-md bg-[#161d28] hover:bg-[#1e2736] text-slate-300 hover:text-white border border-[#263347] transition-all"
-                  >
-                    {preset.name.split(' (')[0]}
-                  </button>
-                ))}
               </div>
             </div>
           </div>

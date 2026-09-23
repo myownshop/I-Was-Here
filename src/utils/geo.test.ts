@@ -3,6 +3,7 @@ import {
   calculateHaversineDistance,
   calculateDistanceAsync,
   formatDistance,
+  parseGoogleMapsUrlOrCoordinates,
 } from './geo';
 
 describe('Haversine Distance Calculator', () => {
@@ -44,3 +45,51 @@ describe('Haversine Distance Calculator', () => {
     expect(formatDistance(50000)).toBe('50.00 km');
   });
 });
+
+describe('Google Maps URL & Coordinates Parser', () => {
+  it('parses standard @lat,lng Google Maps URLs and extracts place name', () => {
+    const url = 'https://www.google.com/maps/place/NYSC+Secretariat/@6.619024,3.358012,17z/data=!3m1!4b1';
+    const result = parseGoogleMapsUrlOrCoordinates(url);
+    expect(result.success).toBe(true);
+    expect(result.latitude).toBeCloseTo(6.619024);
+    expect(result.longitude).toBeCloseTo(3.358012);
+    expect(result.venueName).toBe('NYSC Secretariat');
+  });
+
+  it('parses Google Maps URLs with query parameters (?q=lat,lng)', () => {
+    const url = 'https://maps.google.com/?q=6.619024,3.358012';
+    const result = parseGoogleMapsUrlOrCoordinates(url);
+    expect(result.success).toBe(true);
+    expect(result.latitude).toBe(6.619024);
+    expect(result.longitude).toBe(3.358012);
+  });
+
+  it('parses Google Maps destination / direction links', () => {
+    const url = 'https://www.google.com/maps/dir/?api=1&destination=9.0833,7.4950';
+    const result = parseGoogleMapsUrlOrCoordinates(url);
+    expect(result.success).toBe(true);
+    expect(result.latitude).toBe(9.0833);
+    expect(result.longitude).toBe(7.495);
+  });
+
+  it('parses raw coordinate string', () => {
+    const result = parseGoogleMapsUrlOrCoordinates('6.619024, 3.358012');
+    expect(result.success).toBe(true);
+    expect(result.latitude).toBe(6.619024);
+    expect(result.longitude).toBe(3.358012);
+  });
+
+  it('parses DMS coordinate format', () => {
+    const result = parseGoogleMapsUrlOrCoordinates(`6°37'08.4"N 3°21'28.8"E`);
+    expect(result.success).toBe(true);
+    expect(result.latitude).toBeCloseTo(6.619, 2);
+    expect(result.longitude).toBeCloseTo(3.358, 2);
+  });
+
+  it('returns informative guide for shortened share links', () => {
+    const result = parseGoogleMapsUrlOrCoordinates('https://maps.app.goo.gl/abcdef123');
+    expect(result.success).toBe(false);
+    expect(result.sourceType).toBe('short_url');
+  });
+});
+

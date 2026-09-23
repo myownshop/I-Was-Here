@@ -22,6 +22,7 @@ import { Organization } from '../../types/attendance';
 import { updateOrganization, clearOrganizationCampaignsAndAttendees } from '../../services/firebase';
 import { showToast } from '../common/Toast';
 import { ShareQRModal } from '../common/ShareQRModal';
+import { GoogleMapsLinkInput } from '../common/GoogleMapsLinkInput';
 
 interface OrganizationSettingsProps {
   organization: Organization;
@@ -59,10 +60,10 @@ export function OrganizationSettings({
   // Venue Defaults
   const [defaultVenueName, setDefaultVenueName] = useState(organization.defaultVenueName || '');
   const [defaultLatitude, setDefaultLatitude] = useState<string>(
-    organization.defaultLatitude !== undefined ? String(organization.defaultLatitude) : '6.5954'
+    organization.defaultLatitude !== undefined ? String(organization.defaultLatitude) : ''
   );
   const [defaultLongitude, setDefaultLongitude] = useState<string>(
-    organization.defaultLongitude !== undefined ? String(organization.defaultLongitude) : '3.3421'
+    organization.defaultLongitude !== undefined ? String(organization.defaultLongitude) : ''
   );
   const [defaultRadius, setDefaultRadius] = useState<number>(organization.defaultRadius || 100);
 
@@ -102,6 +103,19 @@ export function OrganizationSettings({
         showToast('error', `Could not detect GPS: ${err.message}`, 'GPS Error');
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  };
+
+  const handleGoogleMapsParsed = (coords: { latitude: number; longitude: number; venueName?: string }) => {
+    setDefaultLatitude(String(coords.latitude.toFixed(6)));
+    setDefaultLongitude(String(coords.longitude.toFixed(6)));
+    if (coords.venueName && !defaultVenueName) {
+      setDefaultVenueName(coords.venueName);
+    }
+    showToast(
+      'success',
+      `Headquarters venue coordinates locked to (${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)})`,
+      'Google Maps Location Applied'
     );
   };
 
@@ -475,6 +489,16 @@ export function OrganizationSettings({
                 className="w-full bg-[#090c12] border border-[#212c3e] rounded-xl pl-9 pr-3.5 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-[#00FF66] transition-colors"
               />
             </div>
+          </div>
+
+          {/* Paste Google Maps Link tool */}
+          <div className="p-3.5 bg-[#090c12] rounded-xl border border-[#1e2738]">
+            <GoogleMapsLinkInput
+              onCoordinatesParsed={handleGoogleMapsParsed}
+              currentLat={defaultLatitude}
+              currentLng={defaultLongitude}
+              accentColor={accentColor}
+            />
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

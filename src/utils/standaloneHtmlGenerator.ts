@@ -156,9 +156,9 @@ export function generateStandaloneHtml(
     document.addEventListener('visibilitychange', checkAntiTamper);
     window.addEventListener('focus', checkAntiTamper);
 
-    // 2. Geolocation Engine
-    let userCoords = { latitude: CAMPAIGN.targetLatitude, longitude: CAMPAIGN.targetLongitude };
-    let userDistance = 0;
+    // 2. Geolocation Engine (Strictly from Member Device)
+    let userCoords = null;
+    let userDistance = null;
 
     function calculateHaversine(lat1, lon1, lat2, lon2) {
       const R = 6371000;
@@ -174,8 +174,10 @@ export function generateStandaloneHtml(
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          userCoords.latitude = pos.coords.latitude;
-          userCoords.longitude = pos.coords.longitude;
+          userCoords = {
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude
+          };
           userDistance = calculateHaversine(
             userCoords.latitude,
             userCoords.longitude,
@@ -187,10 +189,16 @@ export function generateStandaloneHtml(
           statusEl.style.color = userDistance <= CAMPAIGN.allowedRadius ? '${accentColor}' : '#ef4444';
         },
         (err) => {
-          document.getElementById('geo-status').innerText = 'Using default location';
+          const statusEl = document.getElementById('geo-status');
+          statusEl.innerText = 'GPS location permission required from member';
+          statusEl.style.color = '#ef4444';
         },
         { enableHighAccuracy: true, timeout: 10000 }
       );
+    } else {
+      const statusEl = document.getElementById('geo-status');
+      statusEl.innerText = 'Geolocation not supported on this browser';
+      statusEl.style.color = '#ef4444';
     }
 
     // 3. Camera Capture & Image Compression
@@ -320,6 +328,17 @@ export function generateStandaloneHtml(
 
       if (!base64Image) {
         alert('Please capture your front-camera selfie before submitting.');
+        return;
+      }
+
+      if (!userCoords || typeof userCoords.latitude !== 'number' || typeof userCoords.longitude !== 'number') {
+        alert('Your live GPS location is required to verify attendance. Please enable location permissions on your device.');
+        return;
+      }
+
+      if (userDistance === null || userDistance > CAMPAIGN.allowedRadius) {
+        const distMsg = userDistance !== null ? userDistance + 'm' : 'unknown distance';
+        alert('You are ' + distMsg + ' away from the CDS venue. You must be within ' + CAMPAIGN.allowedRadius + 'm to submit attendance.');
         return;
       }
 

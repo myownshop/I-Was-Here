@@ -270,7 +270,20 @@ export function AttendanceForm({
       return;
     }
 
-    // 3. Geofence constraint check
+    // 3. Member Geolocation constraint check
+    if (
+      !currentCoords ||
+      typeof currentCoords.latitude !== 'number' ||
+      typeof currentCoords.longitude !== 'number'
+    ) {
+      showToast(
+        'error',
+        'Live GPS coordinates from your device are required to verify attendance. Please enable location permissions.',
+        'Member Location Required'
+      );
+      return;
+    }
+
     if (!isWithinGeofence || currentDistance === null || currentDistance > campaign.allowedRadius) {
       const distStr = currentDistance !== null ? formatDistance(currentDistance) : 'unknown';
       showToast(
@@ -294,8 +307,9 @@ export function AttendanceForm({
     const shouldSubmitOffline = forceOfflineMode || !isSystemOnline;
 
     const timestamp = new Date().toISOString();
-    const lat = currentCoords ? currentCoords.latitude : campaign.targetLatitude;
-    const lng = currentCoords ? currentCoords.longitude : campaign.targetLongitude;
+    // Genuine member device coordinates (no placeholder fallbacks)
+    const lat = currentCoords.latitude;
+    const lng = currentCoords.longitude;
     const isTampered = isTamperingDetected();
     const cleanTimeBlock = timeBlockCode.trim().toUpperCase();
 
@@ -539,12 +553,24 @@ export function AttendanceForm({
       showToast('warning', 'Please capture your face verification photo before downloading.', 'Photo Required');
       return;
     }
+    if (
+      !currentCoords ||
+      typeof currentCoords.latitude !== 'number' ||
+      typeof currentCoords.longitude !== 'number'
+    ) {
+      showToast(
+        'error',
+        'Live device GPS coordinates from member are required to generate an authentic offline clearance file.',
+        'GPS Location Required'
+      );
+      return;
+    }
 
     try {
       const isTampered = isTamperingDetected();
       const timestamp = new Date().toISOString();
-      const lat = currentCoords ? currentCoords.latitude : campaign?.targetLatitude || 0;
-      const lng = currentCoords ? currentCoords.longitude : campaign?.targetLongitude || 0;
+      const lat = currentCoords.latitude;
+      const lng = currentCoords.longitude;
 
       const offlineRecord: OfflineAttendanceRecord = {
         name: name.trim(),

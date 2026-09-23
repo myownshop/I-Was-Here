@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { Campaign, Organization, TimeBlock } from '../../types/attendance';
 import { FloatingInput } from '../common/FloatingInput';
+import { GoogleMapsLinkInput } from '../common/GoogleMapsLinkInput';
 import { generateShortCode } from '../../utils/nysc';
 import { getCurrentCoordinates } from '../../utils/geo';
 import { updateCampaign, deleteCampaign } from '../../services/firebase';
@@ -30,15 +31,6 @@ interface EditCampaignModalProps {
   onCampaignDeleted?: (campaignId: string) => void;
   organization?: Organization | null;
 }
-
-const VENUE_PRESETS = [
-  { name: 'NYSC Lagos Secretariat (Alausa, Ikeja)', lat: 6.619, lng: 3.358 },
-  { name: 'NYSC Abuja National Directorate (Maitama)', lat: 9.0833, lng: 7.495 },
-  { name: 'NYSC Oyo State Secretariat (Agodi, Ibadan)', lat: 7.4019, lng: 3.9173 },
-  { name: 'NYSC Rivers State Secretariat (Port Harcourt)', lat: 4.8156, lng: 7.0498 },
-  { name: 'NYSC Kano State Secretariat', lat: 11.9964, lng: 8.5167 },
-  { name: 'NYSC Enugu State Secretariat', lat: 6.4584, lng: 7.5464 },
-];
 
 export function EditCampaignModal({
   isOpen,
@@ -128,10 +120,17 @@ export function EditCampaignModal({
     }
   };
 
-  const handleApplyPreset = (preset: typeof VENUE_PRESETS[0]) => {
-    setTargetLat(preset.lat.toFixed(6));
-    setTargetLng(preset.lng.toFixed(6));
-    showToast('info', `Preset venue applied: ${preset.name}`, 'Venue Coordinates Selected');
+  const handleGoogleMapsParsed = (coords: { latitude: number; longitude: number; venueName?: string }) => {
+    setTargetLat(coords.latitude.toFixed(6));
+    setTargetLng(coords.longitude.toFixed(6));
+    if (coords.venueName && !name) {
+      setName(coords.venueName);
+    }
+    showToast(
+      'success',
+      `Venue coordinates updated to (${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)})`,
+      'Google Maps Location Applied'
+    );
   };
 
   const handleRegenerateCode = () => {
@@ -334,6 +333,16 @@ export function EditCampaignModal({
               </button>
             </div>
 
+            {/* Paste Google Maps Link tool */}
+            <div className="p-3 bg-[#0d131d] rounded-xl border border-[#1e2a3b]">
+              <GoogleMapsLinkInput
+                onCoordinatesParsed={handleGoogleMapsParsed}
+                currentLat={targetLat}
+                currentLng={targetLng}
+                accentColor="#00FF66"
+              />
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-[10px] text-slate-400 font-mono mb-1">Latitude</label>
@@ -358,25 +367,6 @@ export function EditCampaignModal({
                   placeholder="e.g. 3.3580"
                   className="w-full px-3 py-2 rounded-xl bg-[#0d121b] border border-[#232f42] text-xs font-mono text-white focus:outline-none focus:border-[#00FF66]"
                 />
-              </div>
-            </div>
-
-            {/* Presets Quick Picker */}
-            <div>
-              <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider block mb-1.5">
-                Quick Apply Preset Venue:
-              </span>
-              <div className="flex flex-wrap gap-1.5">
-                {VENUE_PRESETS.map((p) => (
-                  <button
-                    key={p.name}
-                    type="button"
-                    onClick={() => handleApplyPreset(p)}
-                    className="text-[10px] px-2.5 py-1 rounded-lg bg-[#182130] hover:bg-[#222e42] text-slate-300 border border-[#2b3952] transition-colors cursor-pointer"
-                  >
-                    {p.name.split(' ')[0]} {p.name.split(' ')[1]}
-                  </button>
-                ))}
               </div>
             </div>
 

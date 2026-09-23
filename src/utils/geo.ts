@@ -144,93 +144,15 @@ function getLastKnownCoordinates(maxAgeMs = 7200000): GeoLocationCoordinates | n
 }
 
 /**
- * Rapid IP-based Geolocation fallback for deep indoor environments,
- * office WiFi, or devices where hardware satellite GNSS is blocked.
- */
-async function fetchIpGeolocation(): Promise<GeoLocationCoordinates | null> {
-  const timeoutMs = 3500;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    // Try primary free IP geolocation API
-    const response = await fetch('https://freeipapi.com/api/json', {
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-
-    if (response.ok) {
-      const data = await response.json();
-      if (
-        typeof data.latitude === 'number' &&
-        typeof data.longitude === 'number' &&
-        data.latitude !== 0 &&
-        data.longitude !== 0
-      ) {
-        return {
-          latitude: data.latitude,
-          longitude: data.longitude,
-          accuracy: 50, // Standard network estimation
-        };
-      }
-    }
-  } catch {
-    // Ignore network or abort errors
-  }
-
-  // Backup IP geolocation provider
-  try {
-    const backupController = new AbortController();
-    const backupTimer = setTimeout(() => backupController.abort(), 3000);
-    const backupResponse = await fetch('https://ipapi.co/json/', {
-      signal: backupController.signal,
-    });
-    clearTimeout(backupTimer);
-
-    if (backupResponse.ok) {
-      const data = await backupResponse.json();
-      if (typeof data.latitude === 'number' && typeof data.longitude === 'number') {
-        return {
-          latitude: data.latitude,
-          longitude: data.longitude,
-          accuracy: 60,
-        };
-      }
-    }
-  } catch {
-    // Ignore backup failure
-  }
-
-  return null;
-}
-
-/**
- * Universal Location Acquisition Engine:
- * Works seamlessly everywhere — indoors, classrooms, basements, auditoriums, WiFi, and outdoors.
- * 
- * Strategy:
- * 1. Rapid Dual Concurrent Query: Runs standard (WiFi/Cell triangulation, ideal for indoors)
- *    and high-accuracy (GNSS satellite) concurrently. Whichever acquires valid coordinates first resolves.
- * 2. Rapid Stream Watch: If single-shot queries are slow, watchPosition grabs the first available fix.
- * 3. Network IP Triangulation Fallback: If hardware location is blocked or offline indoors,
- *    transparently resolves coordinates via secure IP geolocation.
- * 4. Recent Cache Recovery: Falls back to cached venue coordinates if available.
+ * Member Device Location Acquisition Engine:
+ * Strictly acquires genuine real-time GPS / WiFi / Cell sensor coordinates directly
+ * from the member's device using standard navigator.geolocation.
+ *
+ * No fake placeholders, mock coordinates, or IP approximation fallbacks are used.
  */
 export async function getCurrentCoordinates(): Promise<GeoLocationCoordinates> {
-  if (typeof window === 'undefined') {
-    throw new Error('Geolocation is not supported in this runtime environment.');
-  }
-
-  // If navigator.geolocation is not supported by the browser, try IP geolocation fallback
-  if (!navigator?.geolocation) {
-    const ipLocation = await fetchIpGeolocation();
-    if (ipLocation) {
-      saveLastKnownCoordinates(ipLocation);
-      return ipLocation;
-    }
-    const cached = getLastKnownCoordinates();
-    if (cached) return cached;
-    throw new Error('Geolocation is not supported by your browser.');
+  if (typeof window === 'undefined' || !navigator?.geolocation) {
+    throw new Error('Geolocation is not supported by your browser or device.');
   }
 
   // Helper promise for browser getCurrentPosition
@@ -250,7 +172,7 @@ export async function getCurrentCoordinates(): Promise<GeoLocationCoordinates> {
     });
   };
 
-  // Helper for fast watchPosition stream
+  // Helper for fast watchPosition stream fix
   const requestWatchFix = (timeoutMs: number): Promise<GeoLocationCoordinates> => {
     return new Promise((resolve, reject) => {
       let watchId: number | null = null;
@@ -275,7 +197,7 @@ export async function getCurrentCoordinates(): Promise<GeoLocationCoordinates> {
             if (watchId !== null) navigator.geolocation.clearWatch(watchId);
             reject(err);
           },
-          { enableHighAccuracy: false, timeout: timeoutMs, maximumAge: 60000 }
+          { enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 10000 }
         );
       } catch (err) {
         clearTimeout(timer);
@@ -286,24 +208,21 @@ export async function getCurrentCoordinates(): Promise<GeoLocationCoordinates> {
 
   let permissionDenied = false;
 
-  // Tier 1: Concurrent Race between WiFi/Cell Triangulation (Indoor Fast) and High Accuracy GPS
+  // Primary: High-accuracy GNSS / device sensor location
   try {
-    // Standard accuracy uses WiFi router BSSID & cell tower signals which work instantly inside buildings
-    const indoorFastPromise = requestPosition({
-      enableHighAccuracy: false,
-      timeout: 6000,
-      maximumAge: 60000, // Accepts fresh cached indoor position
-    });
-
-    // High-accuracy attempts satellite lock if available
     const highAccuracyPromise = requestPosition({
       enableHighAccuracy: true,
-      timeout: 7000,
-      maximumAge: 15000,
+      timeout: 10000,
+      maximumAge: 0,
     });
 
-    // Whichever completes first gives us the instant position
-    const fastestResult = await Promise.race([indoorFastPromise, highAccuracyPromise]);
+    const fastFixPromise = requestPosition({
+      enableHighAccuracy: false,
+      timeout: 6000,
+      maximumAge: 5000,
+    });
+
+    const fastestResult = await Promise.race([highAccuracyPromise, fastFixPromise]);
     saveLastKnownCoordinates(fastestResult);
     return fastestResult;
   } catch (err: unknown) {
@@ -317,39 +236,21 @@ export async function getCurrentCoordinates(): Promise<GeoLocationCoordinates> {
 
   if (permissionDenied) {
     throw new Error(
-      'Location permission was denied. Please allow location access in your browser settings to verify CDS venue attendance.'
+      'Location permission was denied. Please allow location access in your browser settings so your actual attendance location can be verified.'
     );
   }
 
-  // Tier 2: WatchPosition Stream Catch (resolves in < 3s on iOS/Android indoors)
+  // Secondary: Active device location stream catch
   try {
-    const watchResult = await requestWatchFix(3500);
+    const watchResult = await requestWatchFix(5000);
     saveLastKnownCoordinates(watchResult);
     return watchResult;
   } catch {
-    // Proceed to network IP fallback
+    // Stream failed
   }
 
-  // Tier 3: Network IP Geolocation Fallback (Works everywhere with internet, indoors & outdoors)
-  try {
-    const ipResult = await fetchIpGeolocation();
-    if (ipResult) {
-      saveLastKnownCoordinates(ipResult);
-      return ipResult;
-    }
-  } catch {
-    // Proceed to cache
-  }
-
-  // Tier 4: Last Known Location Recovery (from earlier session/check-in)
-  const cachedLocation = getLastKnownCoordinates();
-  if (cachedLocation) {
-    return cachedLocation;
-  }
-
-  // Final fallback guidance
   throw new Error(
-    'Unable to detect location automatically. Please ensure location services or WiFi are enabled on your device.'
+    'Unable to acquire your device GPS coordinates. Please ensure location services / GPS are enabled on your device and retry.'
   );
 }
 
@@ -424,4 +325,225 @@ export function getAppleMapsUrl(
 ): string {
   const q = venueName ? encodeURIComponent(venueName) : 'CDS Venue';
   return `https://maps.apple.com/?daddr=${destLat},${destLng}&q=${q}&dirflg=w`;
+}
+
+export interface ParsedVenueLocation {
+  success: boolean;
+  latitude?: number;
+  longitude?: number;
+  venueName?: string;
+  sourceType?: 'google_maps_url' | 'coordinates' | 'dms' | 'data_param' | 'short_url';
+  error?: string;
+  originalInput: string;
+}
+
+/**
+ * Converts a Degree-Minute-Second (DMS) coordinate component to decimal degrees.
+ */
+function dmsToDecimal(degrees: number, minutes: number, seconds: number, direction: string): number {
+  let dd = Number(degrees) + Number(minutes) / 60 + Number(seconds || 0) / 3600;
+  const dir = direction.toUpperCase();
+  if (dir === 'S' || dir === 'W') {
+    dd = dd * -1;
+  }
+  return dd;
+}
+
+/**
+ * Parses Degrees Minutes Seconds coordinate string.
+ * Example: 6°37'08.4"N 3°21'28.8"E or 6 37 8.4 N, 3 21 28.8 E
+ */
+function parseDMSString(text: string): { latitude: number; longitude: number } | null {
+  // Regex for latitude DMS
+  const latRegex = /(\d{1,2})[°\s]+(\d{1,2})['\s]+([\d.]+)?["\s]*([NSns])/;
+  // Regex for longitude DMS
+  const lngRegex = /(\d{1,3})[°\s]+(\d{1,2})['\s]+([\d.]+)?["\s]*([EWew])/;
+
+  const latMatch = text.match(latRegex);
+  const lngMatch = text.match(lngRegex);
+
+  if (latMatch && lngMatch) {
+    const lat = dmsToDecimal(
+      parseFloat(latMatch[1]),
+      parseFloat(latMatch[2]),
+      parseFloat(latMatch[3] || '0'),
+      latMatch[4]
+    );
+    const lng = dmsToDecimal(
+      parseFloat(lngMatch[1]),
+      parseFloat(lngMatch[2]),
+      parseFloat(lngMatch[3] || '0'),
+      lngMatch[4]
+    );
+
+    if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+      return { latitude: Number(lat.toFixed(6)), longitude: Number(lng.toFixed(6)) };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Intelligently extracts coordinates (latitude, longitude) and venue place name
+ * from any Google Maps link, share link, embedded link, coordinates string, or DMS string.
+ *
+ * Supported formats:
+ * - https://www.google.com/maps/place/NYSC+Secretariat/@6.6190,3.3580,17z/...
+ * - https://www.google.com/maps/@6.6190,3.3580,17z
+ * - https://maps.google.com/?q=6.6190,3.3580
+ * - https://www.google.com/maps/search/?api=1&query=6.6190,3.3580
+ * - https://www.google.com/maps/dir/?api=1&destination=6.6190,3.3580
+ * - https://maps.google.com/maps?ll=6.6190,3.3580
+ * - Links with !3d6.6190!4d3.3580 data parameters
+ * - DMS Strings: 6°37'08.4"N 3°21'28.8"E
+ * - Raw coordinate pairs: 6.619024, 3.358012
+ */
+export function parseGoogleMapsUrlOrCoordinates(input: string): ParsedVenueLocation {
+  const originalInput = (input || '').trim();
+
+  if (!originalInput) {
+    return {
+      success: false,
+      error: 'Please paste a Google Maps link or coordinates.',
+      originalInput,
+    };
+  }
+
+  // Attempt URL-decoding in case pasted from browser address bar
+  let decoded = originalInput;
+  try {
+    decoded = decodeURIComponent(originalInput);
+  } catch {
+    decoded = originalInput;
+  }
+
+  // 1. Check if raw coordinates: e.g. "6.619024, 3.358012" or "6.619024 3.358012"
+  const rawCoordRegex = /^[\[\(]?\s*(-?\d{1,2}(?:\.\d+)?)[,\s]+(-?\d{1,3}(?:\.\d+)?)\s*[\)\]]?$/;
+  const rawMatch = decoded.match(rawCoordRegex);
+  if (rawMatch) {
+    const lat = parseFloat(rawMatch[1]);
+    const lng = parseFloat(rawMatch[2]);
+    if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+      return {
+        success: true,
+        latitude: Number(lat.toFixed(6)),
+        longitude: Number(lng.toFixed(6)),
+        sourceType: 'coordinates',
+        originalInput,
+      };
+    }
+  }
+
+  // 2. Check DMS (Degrees Minutes Seconds): e.g. 6°37'08.4"N 3°21'28.8"E
+  const dmsResult = parseDMSString(decoded);
+  if (dmsResult) {
+    return {
+      success: true,
+      latitude: dmsResult.latitude,
+      longitude: dmsResult.longitude,
+      sourceType: 'dms',
+      originalInput,
+    };
+  }
+
+  // 3. Extract Place Name if present in /place/Venue+Name/
+  let extractedVenueName: string | undefined = undefined;
+  const placeNameMatch = decoded.match(/\/place\/([^/@?]+)/i);
+  if (placeNameMatch && placeNameMatch[1]) {
+    const rawPlace = placeNameMatch[1].replace(/\+/g, ' ').replace(/_/g, ' ').trim();
+    // Ensure the place name isn't just coordinates or DMS
+    if (!/^-?\d+(?:\.\d+)?,-?\d+/.test(rawPlace) && !rawPlace.includes('°')) {
+      extractedVenueName = rawPlace;
+    }
+  }
+
+  // 4. Check for Google Maps Protobuf Data parameters: !3d<lat>!4d<lng>
+  // Frequently present in Google Maps place URLs: /data=!4m5!3m4!1s...!8m2!3d6.619024!4d3.358012
+  const dataParamRegex = /!3d(-?\d{1,2}(?:\.\d+)?)[^!]*!4d(-?\d{1,3}(?:\.\d+)?)/;
+  const dataMatch = decoded.match(dataParamRegex);
+  if (dataMatch) {
+    const lat = parseFloat(dataMatch[1]);
+    const lng = parseFloat(dataMatch[2]);
+    if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+      return {
+        success: true,
+        latitude: Number(lat.toFixed(6)),
+        longitude: Number(lng.toFixed(6)),
+        venueName: extractedVenueName,
+        sourceType: 'data_param',
+        originalInput,
+      };
+    }
+  }
+
+  // 5. Check for @<lat>,<lng> pattern: e.g. /@6.619024,3.358012,17z
+  const atMatch = decoded.match(/@(-?\d{1,2}(?:\.\d+)?),(-?\d{1,3}(?:\.\d+)?)/);
+  if (atMatch) {
+    const lat = parseFloat(atMatch[1]);
+    const lng = parseFloat(atMatch[2]);
+    if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+      return {
+        success: true,
+        latitude: Number(lat.toFixed(6)),
+        longitude: Number(lng.toFixed(6)),
+        venueName: extractedVenueName,
+        sourceType: 'google_maps_url',
+        originalInput,
+      };
+    }
+  }
+
+  // 6. Check for query parameters: ?q=lat,lng or ?ll=lat,lng or ?destination=lat,lng or ?center=lat,lng
+  const queryParamRegex = /[?&](?:q|query|ll|destination|daddr|saddr|center)=(-?\d{1,2}(?:\.\d+)?)[,\s]+(-?\d{1,3}(?:\.\d+)?)/i;
+  const queryMatch = decoded.match(queryParamRegex);
+  if (queryMatch) {
+    const lat = parseFloat(queryMatch[1]);
+    const lng = parseFloat(queryMatch[2]);
+    if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+      return {
+        success: true,
+        latitude: Number(lat.toFixed(6)),
+        longitude: Number(lng.toFixed(6)),
+        venueName: extractedVenueName,
+        sourceType: 'google_maps_url',
+        originalInput,
+      };
+    }
+  }
+
+  // 7. Check path-based coordinates: e.g. /search/6.6190,3.3580 or /dir//6.6190,3.3580
+  const pathCoordRegex = /\/(?:search|place|dir)\/[^/]*?(-?\d{1,2}(?:\.\d+)?)[,\s]+(-?\d{1,3}(?:\.\d+)?)/i;
+  const pathMatch = decoded.match(pathCoordRegex);
+  if (pathMatch) {
+    const lat = parseFloat(pathMatch[1]);
+    const lng = parseFloat(pathMatch[2]);
+    if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+      return {
+        success: true,
+        latitude: Number(lat.toFixed(6)),
+        longitude: Number(lng.toFixed(6)),
+        venueName: extractedVenueName,
+        sourceType: 'google_maps_url',
+        originalInput,
+      };
+    }
+  }
+
+  // 8. If user pasted a short link like maps.app.goo.gl without visible coordinates in the string
+  if (originalInput.includes('goo.gl') || originalInput.includes('maps.app')) {
+    return {
+      success: false,
+      error:
+        'This is a shortened Google Maps share link. Please open this link in your browser, copy the full URL from the address bar (which includes the coordinates @lat,lng), and paste it here.',
+      sourceType: 'short_url',
+      originalInput,
+    };
+  }
+
+  return {
+    success: false,
+    error: 'Could not extract valid GPS coordinates from the provided link or text.',
+    originalInput,
+  };
 }
