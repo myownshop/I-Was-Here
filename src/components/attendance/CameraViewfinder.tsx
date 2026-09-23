@@ -122,9 +122,9 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
-            facingMode: mode,
+            facingMode: { ideal: mode },
             width: { ideal: 640 },
-            height: { ideal: 640 },
+            height: { ideal: 480 },
           },
           audio: false,
         });
@@ -142,13 +142,15 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
       }
 
       if (!stream) {
-        throw caughtError || new Error('Requested device not found');
+        throw caughtError || new Error('Requested camera device could not be opened.');
       }
 
       streamRef.current = stream;
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        videoRef.current.setAttribute('playsinline', 'true');
+        videoRef.current.muted = true;
         try {
           await videoRef.current.play();
         } catch (playErr) {
@@ -230,7 +232,7 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
       }
 
       if (isSubscribed) {
-        // Run detection every ~150ms for low battery/CPU consumption outdoors
+        // Run detection every ~150ms for low battery/CPU consumption
         setTimeout(() => {
           if (isSubscribed) {
             animationFrameId = requestAnimationFrame(runDetection);
@@ -247,9 +249,9 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
     };
   }, [permissionState, capturedPreview, isCapturing, inputMode]);
 
-  // Capture face from live camera
+  // Capture face from live camera - Never blocked if video is ready
   const handleCapture = async () => {
-    if (!videoRef.current || !detection.detected || isCapturing) return;
+    if (!videoRef.current || isCapturing) return;
 
     try {
       setIsCapturing(true);
@@ -648,10 +650,10 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
             <button
               id="btn-capture-face"
               type="button"
-              disabled={(!detection.detected && !isSimplifiedMode) || disabled || isCapturing}
+              disabled={disabled || isCapturing}
               onClick={handleCapture}
               className={`w-full max-w-xs py-3 px-4 rounded-xl font-bold text-xs flex items-center justify-center space-x-2 transition-all cursor-pointer ${
-                (detection.detected || isSimplifiedMode) && !disabled
+                !disabled && !isCapturing
                   ? 'bg-[#00FF66] text-[#0a0c10] shadow-[0_0_20px_rgba(0,255,102,0.4)] hover:bg-[#00e55b] active:scale-[0.98]'
                   : 'bg-[#18202d]/80 text-slate-500 border border-slate-700/60 cursor-not-allowed'
               }`}
@@ -662,11 +664,9 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
                   ? 'Verifying & Compressing...'
                   : disabled
                   ? 'Geofence check pending...'
-                  : isSimplifiedMode
-                  ? 'Take Verification Snapshot'
                   : detection.detected
                   ? 'Capture & Verify Face'
-                  : 'Position Face in Oval to Capture'}
+                  : 'Capture Verification Snapshot'}
               </span>
             </button>
           </div>

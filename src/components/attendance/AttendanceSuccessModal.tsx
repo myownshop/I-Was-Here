@@ -1,4 +1,4 @@
-import { ShieldCheck, CheckCircle2, Download, RefreshCw, Calendar, MapPin, Hash, Building2, Send, Lock } from 'lucide-react';
+import { ShieldCheck, CheckCircle2, Download, RefreshCw, Calendar, MapPin, Hash, Building2, Send, Lock, Zap } from 'lucide-react';
 import { Attendee, Campaign } from '../../types/attendance';
 import { formatDistance } from '../../utils/geo';
 
@@ -9,6 +9,7 @@ interface AttendanceSuccessModalProps {
   accentColor?: string;
   isOfflinePackage?: boolean;
   offlineFilename?: string;
+  durationSeconds?: number;
   onReset: () => void;
   onRedownloadIwh?: () => void;
 }
@@ -20,6 +21,7 @@ export function AttendanceSuccessModal({
   accentColor = '#00FF66',
   isOfflinePackage = false,
   offlineFilename,
+  durationSeconds,
   onReset,
   onRedownloadIwh,
 }: AttendanceSuccessModalProps) {
@@ -70,16 +72,25 @@ export function AttendanceSuccessModal({
         </div>
       </div>
 
-      <span
-        className="text-[11px] font-black uppercase tracking-widest px-3 py-1 rounded-full border mb-2"
-        style={{
-          backgroundColor: `${accentColor}15`,
-          borderColor: `${accentColor}40`,
-          color: accentColor,
-        }}
-      >
-        {isOfflinePackage ? 'OFFLINE AES-256 CLEARANCE' : 'OFFICIAL CLEARANCE'}
-      </span>
+      <div className="flex items-center gap-2 mb-2 flex-wrap justify-center">
+        <span
+          className="text-[11px] font-black uppercase tracking-widest px-3 py-1 rounded-full border"
+          style={{
+            backgroundColor: `${accentColor}15`,
+            borderColor: `${accentColor}40`,
+            color: accentColor,
+          }}
+        >
+          {isOfflinePackage ? 'OFFLINE AES-256 CLEARANCE' : 'OFFICIAL CLEARANCE'}
+        </span>
+
+        {durationSeconds !== undefined && durationSeconds > 0 && (
+          <span className="text-[11px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-full flex items-center gap-1">
+            <Zap className="w-3 h-3 text-emerald-400" />
+            <span>Saved in {durationSeconds.toFixed(1)}s</span>
+          </span>
+        )}
+      </div>
 
       <h2 className="text-xl sm:text-2xl font-black text-white text-center tracking-tight mb-1">
         {isOfflinePackage ? 'Encrypted Package Generated!' : 'Attendance Confirmed!'}

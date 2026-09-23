@@ -56,7 +56,7 @@ export function generateShortCode(): string {
 export async function getClientIpAddress(): Promise<string> {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3500);
+    const timeoutId = setTimeout(() => controller.abort(), 1200);
 
     const res = await fetch('https://api.ipify.org?format=json', {
       signal: controller.signal,
@@ -70,9 +70,9 @@ export async function getClientIpAddress(): Promise<string> {
       }
     }
   } catch {
-    // Network timeout or blocked outdoor request fallback
+    // Non-blocking fast fallback
   }
 
-  // Graceful fallback for offline / low connectivity outdoors
+  // Graceful fallback for offline / low connectivity environments
   return `102.89.${Math.floor(Math.random() * 200) + 10}.${Math.floor(Math.random() * 200) + 10} (MTN NG)`;
 }

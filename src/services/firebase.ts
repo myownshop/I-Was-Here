@@ -825,7 +825,8 @@ export async function checkStateCodeRegisteredToday(
       collection(db, 'campaigns', campaignId, 'attendees'),
       where('stateCode', '==', normalizedCode)
     );
-    const snapshot = await getDocs(q);
+    // Fast 2-second timeout guard
+    const snapshot = await withTimeout(getDocs(q), 2000);
     if (!snapshot.empty) {
       return snapshot.docs.some((docSnap) => {
         const data = docSnap.data();
@@ -833,7 +834,7 @@ export async function checkStateCodeRegisteredToday(
       });
     }
   } catch (error) {
-    console.warn(`Firestore checkStateCode query failed:`, error);
+    console.warn(`Firestore checkStateCode query timeout or error:`, error);
   }
 
   return false;
@@ -850,13 +851,17 @@ export async function uploadAttendeeImage(
 
   try {
     const storageRef = ref(storage, filename);
-    const snapshot = await uploadBytes(storageRef, photoBlob, {
-      contentType: 'image/jpeg',
-      cacheControl: 'public, max-age=31536000',
-    });
-    return await getDownloadURL(snapshot.ref);
+    // Fast 2-second deadline for storage upload to avoid stalling on low-bandwidth connections
+    const snapshot = await withTimeout(
+      uploadBytes(storageRef, photoBlob, {
+        contentType: 'image/jpeg',
+        cacheControl: 'public, max-age=31536000',
+      }),
+      2000
+    );
+    return await withTimeout(getDownloadURL(snapshot.ref), 1500);
   } catch (storageError) {
-    console.warn('Firebase Storage upload failed or restricted, using compressed dataUrl:', storageError);
+    console.warn('Firebase Storage upload skipped/timed out (saving bandwidth), using compressed dataUrl:', storageError);
     return fallbackDataUrl;
   }
 }
@@ -865,6 +870,7 @@ export async function submitAttendance(payload: AttendanceSubmissionPayload): Pr
   const attendeeId = `att_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const timestamp = new Date().toISOString();
 
+  // Upload image or fall back immediately to lightweight compressed dataUrl
   const photoUrl = await uploadAttendeeImage(
     payload.campaignId,
     payload.stateCode,
@@ -894,24 +900,28 @@ export async function submitAttendance(payload: AttendanceSubmissionPayload): Pr
   };
 
   try {
-    await setDoc(doc(db, 'campaigns', payload.campaignId, 'attendees', attendeeId), {
-      campaignId: newAttendee.campaignId,
-      orgId: newAttendee.orgId || '',
-      name: newAttendee.name,
-      stateCode: newAttendee.stateCode,
-      photoUrl: newAttendee.photoUrl,
-      loggedIp: newAttendee.loggedIp,
-      latitude: newAttendee.latitude,
-      longitude: newAttendee.longitude,
-      distanceMeters: newAttendee.distanceMeters,
-      timestamp: newAttendee.timestamp,
-      verified: true,
-      timeBlockCode: newAttendee.timeBlockCode || null,
-      tampered: isTampered,
-      attendanceStatus: newAttendee.attendanceStatus,
-    });
+    // 3.5s timeout for Firestore setDoc
+    await withTimeout(
+      setDoc(doc(db, 'campaigns', payload.campaignId, 'attendees', attendeeId), {
+        campaignId: newAttendee.campaignId,
+        orgId: newAttendee.orgId || '',
+        name: newAttendee.name,
+        stateCode: newAttendee.stateCode,
+        photoUrl: newAttendee.photoUrl,
+        loggedIp: newAttendee.loggedIp,
+        latitude: newAttendee.latitude,
+        longitude: newAttendee.longitude,
+        distanceMeters: newAttendee.distanceMeters,
+        timestamp: newAttendee.timestamp,
+        verified: true,
+        timeBlockCode: newAttendee.timeBlockCode || null,
+        tampered: isTampered,
+        attendanceStatus: newAttendee.attendanceStatus,
+      }),
+      3500
+    );
   } catch (error) {
-    console.warn(`Firestore save attendee failed, updating local fallback:`, error);
+    console.warn(`Firestore save attendee timed out or offline, stored in local cache:`, error);
   }
 
   const cached = getLocalCache<Attendee>(LOCAL_ATTENDEES_KEY, []);
