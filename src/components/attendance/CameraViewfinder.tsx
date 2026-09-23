@@ -14,6 +14,7 @@ import {
   detectFaceInVideoFrame,
   FaceDetectionResult,
 } from '../../services/faceDetector';
+import { globalLivenessTracker } from '../../services/livenessEngine';
 import { compressFacialImage, CompressionResult } from '../../utils/imageCompression';
 
 interface CameraViewfinderProps {
@@ -27,7 +28,7 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
   const streamRef = useRef<MediaStream | null>(null);
 
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
-  const [permissionState, setPermissionState] = useState<'prompt' | 'granted' | 'denied' | 'no_device' | 'error'>('prompt');
+  const [permissionState, setPermissionState] = useState<'prompt' | 'granted' | 'denied' | 'error'>('prompt');
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [detection, setDetection] = useState<FaceDetectionResult>({
     detected: false,
@@ -41,22 +42,23 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
   const [capturedPreview, setCapturedPreview] = useState<CompressionResult | null>(null);
   const [isSimplifiedMode, setIsSimplifiedMode] = useState<boolean>(false);
 
-  // Helper to attach stream to video element safely
-  const attachStreamToVideo = useCallback((stream: MediaStream) => {
-    if (videoRef.current) {
-      if (videoRef.current.srcObject !== stream) {
-        videoRef.current.srcObject = stream;
+  // Safely attach stream to video element
+  const attachStream = useCallback((stream: MediaStream) => {
+    const video = videoRef.current;
+    if (video) {
+      if (video.srcObject !== stream) {
+        video.srcObject = stream;
       }
-      videoRef.current.setAttribute('playsinline', 'true');
-      videoRef.current.muted = true;
-      videoRef.current.autoplay = true;
-      videoRef.current.play().catch((playErr) => {
-        console.warn('Auto-play notice (non-fatal):', playErr);
+      video.setAttribute('playsinline', 'true');
+      video.muted = true;
+      video.autoplay = true;
+      video.play().catch((err) => {
+        console.warn('Video playback trigger:', err);
       });
     }
   }, []);
 
-  // Initialize camera stream with robust fallbacks
+  // Initialize camera with progressive constraint fallback
   const startCamera = useCallback(async (mode: 'user' | 'environment') => {
     try {
       if (streamRef.current) {
@@ -65,8 +67,8 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
       }
 
       if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-        setPermissionState('no_device');
-        setErrorMessage('Camera access is not supported on this device/browser.');
+        setPermissionState('error');
+        setErrorMessage('Camera access is not supported by your current browser environment.');
         return;
       }
 
@@ -74,21 +76,21 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
       setErrorMessage('');
 
       let stream: MediaStream | null = null;
-      let caughtError: unknown = null;
+      let lastErr: unknown = null;
 
-      // 1. Primary constraint attempt: facingMode with standard dimensions
+      // 1. First attempt: ideal facing mode with 640x480 resolution
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
-            facingMode: mode,
+            facingMode: { ideal: mode },
             width: { ideal: 640 },
             height: { ideal: 480 },
           },
           audio: false,
         });
-      } catch (firstErr) {
-        caughtError = firstErr;
-        // 2. Fallback with ideal facingMode
+      } catch (err1) {
+        lastErr = err1;
+        // 2. Second attempt: ideal facing mode only
         try {
           stream = await navigator.mediaDevices.getUserMedia({
             video: {
@@ -96,66 +98,53 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
             },
             audio: false,
           });
-        } catch (secondErr) {
-          caughtError = secondErr;
-          // 3. Fallback to basic unconstrained video (works on external webcams, virtual cams, laptops)
+        } catch (err2) {
+          lastErr = err2;
+          // 3. Third attempt: basic video constraint (works on any available webcam/camera)
           try {
             stream = await navigator.mediaDevices.getUserMedia({
               video: true,
               audio: false,
             });
-          } catch (thirdErr) {
-            caughtError = thirdErr;
+          } catch (err3) {
+            lastErr = err3;
           }
         }
       }
 
       if (!stream) {
-        throw caughtError || new Error('Requested camera device could not be opened.');
+        throw lastErr || new Error('Unable to open camera stream.');
       }
 
       streamRef.current = stream;
-      attachStreamToVideo(stream);
+      attachStream(stream);
       setPermissionState('granted');
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
       const errName = err instanceof Error ? err.name : '';
 
-      const isNoDevice =
-        errName === 'NotFoundError' ||
-        errName === 'DevicesNotFoundError' ||
-        errName === 'OverconstrainedError' ||
-        errMsg.toLowerCase().includes('device not found') ||
-        errMsg.toLowerCase().includes('not found') ||
-        errMsg.toLowerCase().includes('overconstrained');
-
       const isDenied =
         errName === 'NotAllowedError' ||
         errName === 'PermissionDeniedError' ||
         errMsg.toLowerCase().includes('permission denied') ||
-        errMsg.toLowerCase().includes('not allowed');
+        errMsg.toLowerCase().includes('not allowed') ||
+        errMsg.toLowerCase().includes('dismissed');
 
       if (isDenied) {
-        console.warn('Camera access denied:', errMsg);
         setPermissionState('denied');
         setErrorMessage(
-          'Camera access was blocked by your browser. Please tap the camera/lock icon in your URL bar to allow camera access, then tap Retry Camera.'
-        );
-      } else if (isNoDevice) {
-        console.info('No camera device found:', errMsg);
-        setPermissionState('no_device');
-        setErrorMessage(
-          'No physical camera hardware was detected on this device.'
+          'Camera access was blocked by your browser. Please tap the camera/lock icon in your browser URL bar to allow camera access, then tap Retry Camera.'
         );
       } else {
-        console.warn('Camera initialization notice:', errMsg);
         setPermissionState('error');
-        setErrorMessage(errMsg || 'Unable to access camera on this device.');
+        setErrorMessage(
+          errMsg || 'Camera device could not be initialized. Please check that no other application is using the camera.'
+        );
       }
     }
-  }, [attachStreamToVideo]);
+  }, [attachStream]);
 
-  // Handle camera start/stop lifecycle purely on facingMode changes
+  // Mount/Unmount & facingMode lifecycle
   useEffect(() => {
     startCamera(facingMode);
 
@@ -167,15 +156,15 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
     };
   }, [facingMode, startCamera]);
 
-  // Video Ref callback to guarantee srcObject attachment even if DOM mounts later
-  const setVideoElementRef = useCallback((el: HTMLVideoElement | null) => {
+  // Ensure stream stays bound when video element ref is set
+  const setVideoRef = useCallback((el: HTMLVideoElement | null) => {
     videoRef.current = el;
     if (el && streamRef.current) {
-      attachStreamToVideo(streamRef.current);
+      attachStream(streamRef.current);
     }
-  }, [attachStreamToVideo]);
+  }, [attachStream]);
 
-  // Face Detection & Anti-Spoof Liveness Loop for Live Video (Runs smoothly every ~120ms)
+  // Face Detection & Anti-Spoof Liveness Loop for Live Video
   useEffect(() => {
     if (permissionState !== 'granted' || capturedPreview || isCapturing) {
       return;
@@ -184,7 +173,7 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
     let isSubscribed = true;
     let timerId: number;
 
-    const tick = async () => {
+    const runCheck = async () => {
       if (!isSubscribed) return;
 
       const video = videoRef.current;
@@ -202,11 +191,11 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
       }
 
       if (isSubscribed) {
-        timerId = window.setTimeout(tick, 120);
+        timerId = window.setTimeout(runCheck, 120);
       }
     };
 
-    timerId = window.setTimeout(tick, 200);
+    timerId = window.setTimeout(runCheck, 150);
 
     return () => {
       isSubscribed = false;
@@ -236,6 +225,7 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
   };
 
   const handleRetake = () => {
+    globalLivenessTracker.reset();
     setCapturedPreview(null);
     setDetection({
       detected: false,
@@ -248,6 +238,7 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
   };
 
   const toggleCamera = () => {
+    globalLivenessTracker.reset();
     setFacingMode((prev) => (prev === 'user' ? 'environment' : 'user'));
   };
 
@@ -263,14 +254,14 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
 
       {/* Viewfinder Header Banner */}
       {!capturedPreview && (
-        <div className="px-3 py-2.5 bg-[#101520] border-b border-[#1b2332] flex items-center justify-between">
+        <div className="px-3.5 py-2.5 bg-[#101520] border-b border-[#1b2332] flex items-center justify-between">
           <div className="flex items-center space-x-2">
-            <div className="w-2 h-2 rounded-full bg-[#00FF66] animate-pulse" />
+            <div className="w-2.5 h-2.5 rounded-full bg-[#00FF66] animate-pulse" />
             <span className="text-xs font-bold text-white tracking-wide">Live Facial Biometrics</span>
           </div>
 
           <div className="flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full bg-[#00FF66]/10 border border-[#00FF66]/30 text-[#00FF66] text-[10px] font-bold">
-            <ShieldCheck className="w-3 h-3" />
+            <ShieldCheck className="w-3.5 h-3.5" />
             <span>Anti-Spoof Liveness Active</span>
           </div>
         </div>
@@ -306,28 +297,18 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
             <span>Retake Verification Photo</span>
           </button>
         </div>
-      ) : permissionState === 'denied' || permissionState === 'no_device' || permissionState === 'error' ? (
-        /* Camera Error / No Device Fallback UI */
+      ) : permissionState === 'denied' || permissionState === 'error' ? (
+        /* Camera Error / Permission Fallback UI */
         <div
           id="camera-permission-fallback"
           className="p-6 text-center flex flex-col items-center justify-center min-h-[300px]"
         >
-          <div
-            className={`w-14 h-14 rounded-2xl flex items-center justify-center mb-4 ${
-              permissionState === 'no_device'
-                ? 'bg-amber-500/10 border border-amber-500/30 text-amber-400'
-                : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'
-            }`}
-          >
+          <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-4 bg-rose-500/10 border border-rose-500/30 text-rose-400">
             <AlertCircle className="w-7 h-7" />
           </div>
 
           <h3 className="text-base font-bold text-white mb-1.5">
-            {permissionState === 'no_device'
-              ? 'No Camera Hardware Found'
-              : permissionState === 'denied'
-              ? 'Camera Access Blocked'
-              : 'Camera Initialization Notice'}
+            {permissionState === 'denied' ? 'Camera Permission Blocked' : 'Camera Unavailable'}
           </h3>
 
           <p className="text-xs text-slate-300 max-w-xs mb-4 leading-relaxed">
@@ -348,7 +329,7 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
         /* Active Live Camera Viewfinder */
         <div className="relative aspect-square sm:aspect-[4/3] w-full max-h-[380px] flex items-center justify-center overflow-hidden bg-black">
           <video
-            ref={setVideoElementRef}
+            ref={setVideoRef}
             playsInline
             muted
             autoPlay
@@ -435,7 +416,7 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
                 ) : detection.isLive ? (
                   <>
                     <Sparkles className="w-3.5 h-3.5 text-[#00FF66] animate-pulse" />
-                    <span>🛡️ Liveness Verified ({Math.round(detection.confidence * 100)}%) • Ready to Snap</span>
+                    <span>🛡️ Liveness Verified ({Math.round(detection.confidence * 100)}%) • Ready</span>
                   </>
                 ) : detection.detected ? (
                   <>
@@ -459,7 +440,7 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
             </div>
           </div>
 
-          {/* Mode Switcher (AI Detector vs Quick Capture) */}
+          {/* Mode Switcher (AI Liveness vs Quick Capture) */}
           <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5">
             <button
               type="button"
@@ -519,4 +500,3 @@ export function CameraViewfinder({ onCapture, disabled = false }: CameraViewfind
     </div>
   );
 }
-
