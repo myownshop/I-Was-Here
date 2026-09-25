@@ -89,8 +89,12 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend, onNavigateToHome }
       setLoading(true);
       const res = await signInAdmin(email, password);
       if (res.org) {
-        showToast('success', `Signed in as admin for ${res.org.name}`);
-        onAuthSuccess(res.org, undefined, false);
+        if (res.profile?.role === 'superuser') {
+          showToast('success', 'Logged in with Super User privileges. Access to all organizations granted.');
+        } else {
+          showToast('success', `Signed in as admin for ${res.org.name}`);
+        }
+        onAuthSuccess(res.org, res.profile || undefined, false);
       } else {
         setError('No organization linked to this account.');
       }
@@ -114,7 +118,10 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend, onNavigateToHome }
       const res = await signInWithGoogle();
       if (res.org) {
         showToast('success', `Authenticated as ${res.org.adminName}`);
-        const isNew = !res.org.stateLga && !res.org.cdsBatch;
+        const hasEnteredBefore =
+          typeof window !== 'undefined' &&
+          localStorage.getItem(`iwh_has_entered_portal_${res.org.id}`) === 'true';
+        const isNew = !hasEnteredBefore && !res.org.stateLga && !res.org.cdsBatch;
         onAuthSuccess(res.org, undefined, isNew);
       }
     } catch (err: unknown) {
@@ -392,15 +399,15 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend, onNavigateToHome }
           <form onSubmit={handleSignIn} className="space-y-4">
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
-                Admin Email
+                Admin Email or Username
               </label>
               <div className="relative">
                 <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
                 <input
                   id="input-signin-email"
-                  type="email"
+                  type="text"
                   required
-                  placeholder="coordinator@organization.org"
+                  placeholder="coordinator@org.org or username"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full pl-9 pr-3 py-2.5 bg-[#0a0c12] border border-[#1f283a] rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#00FF66]"
@@ -418,7 +425,7 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend, onNavigateToHome }
                   id="input-signin-password"
                   type={showSignInPassword ? 'text' : 'password'}
                   required
-                  placeholder="Password"
+                  placeholder="Enter your password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="w-full pl-9 pr-10 py-2.5 bg-[#0a0c12] border border-[#1f283a] rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#00FF66]"

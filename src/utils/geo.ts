@@ -89,6 +89,20 @@ export function formatDistance(meters: number): string {
 }
 
 /**
+ * Returns estimated walking time in minutes based on average walking pace (1.3 m/s or 4.7 km/h)
+ */
+export function getWalkingTimeEstimate(meters: number): string {
+  if (isNaN(meters) || meters <= 0) return '< 1 min';
+  const seconds = meters / 1.3;
+  const minutes = Math.ceil(seconds / 60);
+  if (minutes <= 1) return '~1 min walk';
+  if (minutes < 60) return `~${minutes} mins walk`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMins = minutes % 60;
+  return `~${hours}h ${remainingMins}m walk`;
+}
+
+/**
  * Key for storing last known valid location in localStorage
  */
 const LAST_KNOWN_GEO_KEY = 'cds_last_known_geo_v1';
@@ -122,7 +136,7 @@ function saveLastKnownCoordinates(coords: GeoLocationCoordinates): void {
 /**
  * Retrieves the last known coordinates if within recent validity window (e.g. 2 hours).
  */
-function getLastKnownCoordinates(maxAgeMs = 7200000): GeoLocationCoordinates | null {
+export function getLastKnownCoordinates(maxAgeMs = 7200000): GeoLocationCoordinates | null {
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
       const stored = localStorage.getItem(LAST_KNOWN_GEO_KEY);
@@ -148,7 +162,8 @@ function getLastKnownCoordinates(maxAgeMs = 7200000): GeoLocationCoordinates | n
  * Strictly acquires genuine real-time GPS / WiFi / Cell sensor coordinates directly
  * from the member's device using standard navigator.geolocation.
  *
- * No fake placeholders, mock coordinates, or IP approximation fallbacks are used.
+ * Implements high-accuracy GNSS hardware satellite query, multi-attempt accuracy refinement,
+ * and clear user instructions.
  */
 export async function getCurrentCoordinates(): Promise<GeoLocationCoordinates> {
   if (typeof window === 'undefined' || !navigator?.geolocation) {
@@ -161,9 +176,9 @@ export async function getCurrentCoordinates(): Promise<GeoLocationCoordinates> {
       navigator.geolocation.getCurrentPosition(
         (position) => {
           resolve({
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-            accuracy: position.coords.accuracy || 15,
+            latitude: Number(position.coords.latitude.toFixed(6)),
+            longitude: Number(position.coords.longitude.toFixed(6)),
+            accuracy: position.coords.accuracy || 10,
           });
         },
         (error) => reject(error),
@@ -172,32 +187,50 @@ export async function getCurrentCoordinates(): Promise<GeoLocationCoordinates> {
     });
   };
 
-  // Helper for fast watchPosition stream fix
+  // Helper for fast watchPosition stream fix to acquire satellite lock
   const requestWatchFix = (timeoutMs: number): Promise<GeoLocationCoordinates> => {
     return new Promise((resolve, reject) => {
       let watchId: number | null = null;
+      let bestPosition: GeoLocationCoordinates | null = null;
+
       const timer = setTimeout(() => {
         if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-        reject(new Error('Location stream timeout'));
+        if (bestPosition) {
+          resolve(bestPosition);
+        } else {
+          reject(new Error('Location stream timeout'));
+        }
       }, timeoutMs);
 
       try {
         watchId = navigator.geolocation.watchPosition(
           (pos) => {
-            clearTimeout(timer);
-            if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-            resolve({
-              latitude: pos.coords.latitude,
-              longitude: pos.coords.longitude,
-              accuracy: pos.coords.accuracy || 20,
-            });
+            const currentAcc = pos.coords.accuracy || 20;
+            const currentFix: GeoLocationCoordinates = {
+              latitude: Number(pos.coords.latitude.toFixed(6)),
+              longitude: Number(pos.coords.longitude.toFixed(6)),
+              accuracy: currentAcc,
+            };
+
+            if (!bestPosition || currentAcc < (bestPosition.accuracy || 100)) {
+              bestPosition = currentFix;
+            }
+
+            // If we obtained a great fix (<= 15m), complete immediately
+            if (currentAcc <= 15) {
+              clearTimeout(timer);
+              if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+              resolve(currentFix);
+            }
           },
           (err) => {
-            clearTimeout(timer);
-            if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-            reject(err);
+            if (!bestPosition) {
+              clearTimeout(timer);
+              if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+              reject(err);
+            }
           },
-          { enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 10000 }
+          { enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 0 }
         );
       } catch (err) {
         clearTimeout(timer);
@@ -208,21 +241,17 @@ export async function getCurrentCoordinates(): Promise<GeoLocationCoordinates> {
 
   let permissionDenied = false;
 
-  // Primary: High-accuracy GNSS / device sensor location
+  // Primary Attempt: High-accuracy GNSS / device sensor location
   try {
     const highAccuracyPromise = requestPosition({
       enableHighAccuracy: true,
-      timeout: 10000,
+      timeout: 9000,
       maximumAge: 0,
     });
 
-    const fastFixPromise = requestPosition({
-      enableHighAccuracy: false,
-      timeout: 6000,
-      maximumAge: 5000,
-    });
+    const watchStreamPromise = requestWatchFix(7000);
 
-    const fastestResult = await Promise.race([highAccuracyPromise, fastFixPromise]);
+    const fastestResult = await Promise.race([highAccuracyPromise, watchStreamPromise]);
     saveLastKnownCoordinates(fastestResult);
     return fastestResult;
   } catch (err: unknown) {
@@ -240,17 +269,21 @@ export async function getCurrentCoordinates(): Promise<GeoLocationCoordinates> {
     );
   }
 
-  // Secondary: Active device location stream catch
+  // Secondary Attempt: Standard fix fallback
   try {
-    const watchResult = await requestWatchFix(5000);
-    saveLastKnownCoordinates(watchResult);
-    return watchResult;
-  } catch {
-    // Stream failed
+    const fallbackResult = await requestPosition({
+      enableHighAccuracy: false,
+      timeout: 8000,
+      maximumAge: 5000,
+    });
+    saveLastKnownCoordinates(fallbackResult);
+    return fallbackResult;
+  } catch (err) {
+    console.warn('Fallback GPS attempt error:', err);
   }
 
   throw new Error(
-    'Unable to acquire your device GPS coordinates. Please ensure location services / GPS are enabled on your device and retry.'
+    'Unable to acquire device GPS coordinates. Please ensure GPS / Location is toggled ON on your phone/computer and tap Refresh.'
   );
 }
 
@@ -531,11 +564,11 @@ export function parseGoogleMapsUrlOrCoordinates(input: string): ParsedVenueLocat
   }
 
   // 8. If user pasted a short link like maps.app.goo.gl without visible coordinates in the string
-  if (originalInput.includes('goo.gl') || originalInput.includes('maps.app')) {
+  if (originalInput.includes('goo.gl') || originalInput.includes('maps.app') || originalInput.includes('g.page')) {
     return {
       success: false,
       error:
-        'This is a shortened Google Maps share link. Please open this link in your browser, copy the full URL from the address bar (which includes the coordinates @lat,lng), and paste it here.',
+        'Resolving Google Maps short link...',
       sourceType: 'short_url',
       originalInput,
     };
@@ -547,3 +580,61 @@ export function parseGoogleMapsUrlOrCoordinates(input: string): ParsedVenueLocat
     originalInput,
   };
 }
+
+/**
+ * Asynchronously resolves any Google Maps link, including shortened links (maps.app.goo.gl, goo.gl/maps),
+ * places, and coordinate strings by connecting to the backend unshortening endpoint.
+ */
+export async function parseGoogleMapsUrlOrCoordinatesAsync(input: string): Promise<ParsedVenueLocation> {
+  const originalInput = (input || '').trim();
+  if (!originalInput) {
+    return {
+      success: false,
+      error: 'Please paste a Google Maps link or coordinates.',
+      originalInput,
+    };
+  }
+
+  // 1. Try local instantaneous regex parsing first
+  const immediate = parseGoogleMapsUrlOrCoordinates(originalInput);
+  if (immediate.success) {
+    return immediate;
+  }
+
+  // 2. If it's a URL or short link, call our server-side resolver
+  try {
+    const response = await fetch('/api/resolve-maps-url', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ url: originalInput }),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success && data.latitude !== undefined && data.longitude !== undefined) {
+        return {
+          success: true,
+          latitude: Number(data.latitude),
+          longitude: Number(data.longitude),
+          venueName: data.venueName,
+          sourceType: data.sourceType || 'short_url',
+          originalInput,
+        };
+      } else if (data.error) {
+        return {
+          success: false,
+          error: data.error,
+          sourceType: 'short_url',
+          originalInput,
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('Backend link resolver unavailable:', err);
+  }
+
+  return immediate;
+}
+

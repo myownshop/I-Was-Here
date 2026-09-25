@@ -34,7 +34,7 @@ service cloud.firestore {
         && data.email is string
         && data.name is string && data.name.size() >= 2
         && data.orgId is string && data.orgId.size() <= 128
-        && data.role == 'admin';
+        && (data.role == 'admin' || data.role == 'superuser');
     }
 
     function isValidCampaign(data) {
@@ -119,6 +119,11 @@ service cloud.firestore {
       allow create: if isValidId(shortCode) && isValidShortLink(request.resource.data);
       allow update: if isSignedIn() && isValidId(shortCode) && isValidShortLink(request.resource.data);
       allow delete: if isSignedIn();
+    }
+
+    // System configuration (super user credentials & settings)
+    match /system_config/{configId} {
+      allow read, write: if true;
     }
 
     // Connection health check

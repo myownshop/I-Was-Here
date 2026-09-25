@@ -26,8 +26,32 @@ export interface UserProfile {
   email: string;
   name: string;
   orgId: string;
-  role: 'admin';
+  role: 'admin' | 'superuser';
   createdAt: string;
+}
+
+export interface SuperUserCredentials {
+  username: string;
+  password?: string;
+  name: string;
+  email: string;
+  updatedAt?: string;
+}
+
+export interface OrganizationWithStats extends Organization {
+  activeCampaignsCount?: number;
+  historyCampaignsCount?: number;
+  totalAttendeesCount?: number;
+}
+
+export interface CampaignWithOrg extends Campaign {
+  organizationName?: string;
+  organizationAccent?: string;
+  adminName?: string;
+  adminEmail?: string;
+  stateLga?: string;
+  cdsBatch?: string;
+  attendeeCount?: number;
 }
 
 export interface TimeBlock {

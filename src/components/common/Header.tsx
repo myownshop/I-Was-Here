@@ -49,16 +49,22 @@ export function Header({
           <div className="min-w-0">
             <div className="flex items-center space-x-2">
               <span className="text-sm font-extrabold tracking-wider text-white">IWasHere</span>
-              <span
-                className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded border hidden xs:inline"
-                style={{
-                  backgroundColor: `${accentColor}15`,
-                  borderColor: `${accentColor}30`,
-                  color: accentColor,
-                }}
-              >
-                PWA
-              </span>
+              {currentUserProfile?.role === 'superuser' ? (
+                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/40">
+                  👑 Super User
+                </span>
+              ) : (
+                <span
+                  className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded border hidden xs:inline"
+                  style={{
+                    backgroundColor: `${accentColor}15`,
+                    borderColor: `${accentColor}30`,
+                    color: accentColor,
+                  }}
+                >
+                  PWA
+                </span>
+              )}
             </div>
             <p className="text-[11px] text-slate-400 font-medium truncate max-w-[130px] sm:max-w-xs">
               {organization?.name || activeCampaignName || 'Anti-Proxy Biometric Attendance'}

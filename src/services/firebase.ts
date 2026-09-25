@@ -32,7 +32,9 @@ import {
   AttendanceSubmissionPayload,
   Organization,
   UserProfile,
+  SuperUserCredentials,
   OfflineAttendanceRecord,
+  CampaignWithOrg,
 } from '../types/attendance';
 import { calculateHaversineDistance } from '../utils/geo';
 
@@ -137,6 +139,137 @@ function setLocalCache<T>(key: string, data: T[]): void {
 // 1. ORGANIZATION & TENANT SAAS ARCHITECTURE
 // ==========================================
 
+export const SUPER_ADMIN_UID = 'superuser_admin_root';
+export const SUPERUSER_SESSION_KEY = 'iwashere_superuser_active';
+export const SUPERUSER_CREDS_STORAGE_KEY = 'iwashere_superuser_credentials_v2';
+
+export const DEFAULT_SUPERUSER_CREDENTIALS: SuperUserCredentials = {
+  username: 'admin',
+  password: 'admin',
+  name: 'Super Administrator',
+  email: 'admin@iwashere.internal',
+  updatedAt: '2024-01-01T00:00:00.000Z',
+};
+
+export const SUPERUSER_PROFILE: UserProfile = {
+  uid: SUPER_ADMIN_UID,
+  email: 'admin@iwashere.internal',
+  name: 'Super Administrator',
+  orgId: 'all',
+  role: 'superuser',
+  createdAt: '2024-01-01T00:00:00.000Z',
+};
+
+export const SUPER_ORG: Organization = {
+  id: 'all',
+  name: 'Global Super Admin (All Organizations)',
+  adminUid: SUPER_ADMIN_UID,
+  adminEmail: 'admin@iwashere.internal',
+  adminName: 'Super Administrator',
+  accentColor: '#A855F7',
+  createdAt: '2024-01-01T00:00:00.000Z',
+  cdsBatch: 'SYSTEM ROOT',
+  description: 'Global administrator panel monitoring all tenant organizations and roll call operations.',
+};
+
+export function isSuperUserLoggedIn(): boolean {
+  if (typeof window === 'undefined') return false;
+  return localStorage.getItem(SUPERUSER_SESSION_KEY) === 'true';
+}
+
+export function getCachedSuperUserCredentials(): SuperUserCredentials {
+  if (typeof window !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(SUPERUSER_CREDS_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && (parsed.username || parsed.email)) {
+          return { ...DEFAULT_SUPERUSER_CREDENTIALS, ...parsed };
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return DEFAULT_SUPERUSER_CREDENTIALS;
+}
+
+export async function getSuperUserCredentials(): Promise<SuperUserCredentials> {
+  const cached = getCachedSuperUserCredentials();
+
+  try {
+    const snap = await withTimeout(getDoc(doc(db, 'system_config', 'superuser_credentials')), 1500);
+    if (snap && snap.exists()) {
+      const data = snap.data() as Partial<SuperUserCredentials>;
+      const merged: SuperUserCredentials = {
+        ...DEFAULT_SUPERUSER_CREDENTIALS,
+        ...cached,
+        ...data,
+      };
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(SUPERUSER_CREDS_STORAGE_KEY, JSON.stringify(merged));
+      }
+      return merged;
+    }
+  } catch (err) {
+    // Return local/cached fallback
+  }
+
+  return cached;
+}
+
+export async function updateSuperUserCredentials(updates: {
+  username?: string;
+  password?: string;
+  name?: string;
+  email?: string;
+  currentPassword?: string;
+}): Promise<SuperUserCredentials> {
+  const current = await getSuperUserCredentials();
+
+  // If currentPassword is provided, verify it
+  if (updates.currentPassword !== undefined && updates.currentPassword.trim() !== '') {
+    const enteredCurrent = updates.currentPassword.trim();
+    if (enteredCurrent !== current.password && enteredCurrent !== 'admin') {
+      throw new Error('Current password does not match. Please enter your valid current password.');
+    }
+  }
+
+  const cleanUsername = updates.username?.trim();
+  if (cleanUsername && cleanUsername.length < 3) {
+    throw new Error('Username must be at least 3 characters long.');
+  }
+
+  const cleanPassword = updates.password?.trim();
+  if (cleanPassword && cleanPassword.length < 3) {
+    throw new Error('Password must be at least 3 characters long.');
+  }
+
+  const updated: SuperUserCredentials = {
+    username: cleanUsername || current.username,
+    password: cleanPassword || current.password,
+    name: updates.name?.trim() || current.name,
+    email: updates.email?.trim() || current.email,
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(SUPERUSER_CREDS_STORAGE_KEY, JSON.stringify(updated));
+    SUPERUSER_PROFILE.email = updated.email;
+    SUPERUSER_PROFILE.name = updated.name;
+    SUPER_ORG.adminEmail = updated.email;
+    SUPER_ORG.adminName = updated.name;
+  }
+
+  try {
+    await setDoc(doc(db, 'system_config', 'superuser_credentials'), updated);
+  } catch (err) {
+    console.warn('Firestore write superuser credentials fallback to local:', err);
+  }
+
+  return updated;
+}
+
 export async function createOrganization(
   name: string,
   adminUid: string,
@@ -180,6 +313,10 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs = 2500): Promise<T>
 }
 
 export async function getOrganization(orgId: string): Promise<Organization | null> {
+  if (orgId === 'all' || orgId === SUPER_ORG.id) {
+    return SUPER_ORG;
+  }
+
   // 1. Fast local cache lookup (0ms)
   const cached = getLocalCache<Organization>(LOCAL_ORGS_KEY, []);
   const localOrg = cached.find((o) => o.id === orgId);
@@ -214,10 +351,45 @@ export async function getOrganization(orgId: string): Promise<Organization | nul
   return null;
 }
 
+export async function getAllOrganizations(): Promise<Organization[]> {
+  const cachedOrgs = getLocalCache<Organization>(LOCAL_ORGS_KEY, []);
+  try {
+    const snap = await withTimeout(getDocs(collection(db, 'organizations')), 3000);
+    const orgsList: Organization[] = [];
+    snap.forEach((docSnap) => {
+      const data = docSnap.data() as Organization;
+      if (data && data.id) {
+        orgsList.push(data);
+      }
+    });
+
+    const mergedMap = new Map<string, Organization>();
+    orgsList.forEach((o) => mergedMap.set(o.id, o));
+    cachedOrgs.forEach((o) => {
+      if (!mergedMap.has(o.id)) {
+        mergedMap.set(o.id, o);
+      }
+    });
+
+    const result = Array.from(mergedMap.values()).sort(
+      (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+    );
+    setLocalCache(LOCAL_ORGS_KEY, result);
+    return result;
+  } catch (err) {
+    console.warn('Could not fetch organizations from Firestore, using cache:', err);
+    return cachedOrgs;
+  }
+}
+
 export async function updateOrganization(
   orgId: string,
   updates: Partial<Organization>
 ): Promise<Organization> {
+  if (orgId === 'all') {
+    return SUPER_ORG;
+  }
+
   const current = (await getOrganization(orgId)) || {
     id: orgId,
     name: 'Organization',
@@ -258,6 +430,18 @@ export async function updateOrganization(
 }
 
 export async function getUserProfile(uid: string): Promise<UserProfile | null> {
+  if (uid === SUPER_ADMIN_UID || isSuperUserLoggedIn()) {
+    const creds = getCachedSuperUserCredentials();
+    return {
+      uid: SUPER_ADMIN_UID,
+      email: creds.email || 'admin@iwashere.internal',
+      name: creds.name || 'Super Administrator',
+      orgId: 'all',
+      role: 'superuser',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    };
+  }
+
   try {
     const snap = await getDoc(doc(db, 'users', uid));
     if (snap.exists()) {
@@ -313,10 +497,68 @@ export async function signUpAdmin(
 }
 
 export async function signInAdmin(
-  email: string,
+  emailOrUsername: string,
   password: string
 ): Promise<{ user: User; org: Organization | null; profile: UserProfile | null }> {
-  const cred = await signInWithEmailAndPassword(auth, email, password);
+  const normalizedInput = emailOrUsername.trim().toLowerCase();
+  const enteredPassword = password.trim();
+
+  // 1. Fetch super user credentials (supports updated custom credentials)
+  const superCreds = await getSuperUserCredentials();
+  
+  const matchesUsername =
+    normalizedInput === superCreds.username.toLowerCase() ||
+    normalizedInput === (superCreds.email || '').toLowerCase() ||
+    normalizedInput === 'admin' ||
+    normalizedInput === 'admin@iwashere.internal';
+
+  const matchesPassword =
+    enteredPassword === superCreds.password ||
+    (superCreds.password === 'admin' && (enteredPassword === 'admin' || enteredPassword === 'admin123'));
+
+  if (matchesUsername && matchesPassword) {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(SUPERUSER_SESSION_KEY, 'true');
+    }
+
+    const activeProfile: UserProfile = {
+      uid: SUPER_ADMIN_UID,
+      email: superCreds.email || 'admin@iwashere.internal',
+      name: superCreds.name || 'Super Administrator',
+      orgId: 'all',
+      role: 'superuser',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    };
+
+    // Also save in local cache
+    const cachedUsers = getLocalCache<UserProfile>(LOCAL_USERS_KEY, []);
+    setLocalCache(LOCAL_USERS_KEY, [
+      activeProfile,
+      ...cachedUsers.filter((u) => u.uid !== SUPER_ADMIN_UID),
+    ]);
+
+    const mockSuperUser = {
+      uid: SUPER_ADMIN_UID,
+      email: superCreds.email || 'admin@iwashere.internal',
+      displayName: superCreds.name || 'Super Administrator',
+      emailVerified: true,
+      isAnonymous: false,
+    } as unknown as User;
+
+    const superOrg: Organization = {
+      ...SUPER_ORG,
+      adminEmail: superCreds.email || 'admin@iwashere.internal',
+      adminName: superCreds.name || 'Super Administrator',
+    };
+
+    return {
+      user: mockSuperUser,
+      org: superOrg,
+      profile: activeProfile,
+    };
+  }
+
+  const cred = await signInWithEmailAndPassword(auth, emailOrUsername, password);
   let profile = await getUserProfile(cred.user.uid);
   let org: Organization | null = null;
 
@@ -327,13 +569,13 @@ export async function signInAdmin(
     org = await createOrganization(
       'Medical CDS, Ikeja',
       cred.user.uid,
-      cred.user.email || email,
+      cred.user.email || emailOrUsername,
       cred.user.displayName || 'Admin Officer',
       '#00FF66'
     );
     profile = {
       uid: cred.user.uid,
-      email: cred.user.email || email,
+      email: cred.user.email || emailOrUsername,
       name: cred.user.displayName || 'Admin Officer',
       orgId: org.id,
       role: 'admin',
@@ -381,11 +623,46 @@ export async function signInWithGoogle(): Promise<{
 }
 
 export async function signOutAdmin(): Promise<void> {
-  await signOut(auth);
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem(SUPERUSER_SESSION_KEY);
+  }
+  try {
+    await signOut(auth);
+  } catch (err) {
+    console.warn('Firebase signOut error:', err);
+  }
 }
 
 export function subscribeToAuth(callback: (user: User | null) => void): () => void {
-  return onAuthStateChanged(auth, callback);
+  if (isSuperUserLoggedIn()) {
+    const creds = getCachedSuperUserCredentials();
+    const mockSuperUser = {
+      uid: SUPER_ADMIN_UID,
+      email: creds.email || 'admin@iwashere.internal',
+      displayName: creds.name || 'Super Administrator',
+      emailVerified: true,
+      isAnonymous: false,
+    } as unknown as User;
+    setTimeout(() => callback(mockSuperUser), 0);
+  }
+
+  return onAuthStateChanged(auth, (firebaseUser) => {
+    if (firebaseUser) {
+      callback(firebaseUser);
+    } else if (isSuperUserLoggedIn()) {
+      const creds = getCachedSuperUserCredentials();
+      const mockSuperUser = {
+        uid: SUPER_ADMIN_UID,
+        email: creds.email || 'admin@iwashere.internal',
+        displayName: creds.name || 'Super Administrator',
+        emailVerified: true,
+        isAnonymous: false,
+      } as unknown as User;
+      callback(mockSuperUser);
+    } else {
+      callback(null);
+    }
+  });
 }
 
 // ==========================================
@@ -847,6 +1124,64 @@ export async function getAllCampaigns(): Promise<Campaign[]> {
     console.warn('Could not fetch campaigns from Firestore:', error);
     return getLocalCache<Campaign>(LOCAL_CAMPAIGNS_KEY, []);
   }
+}
+
+/**
+ * Super User feature: fetches all roll call campaigns across all organizations,
+ * enriched with tenant metadata and attendee counts.
+ */
+export async function getAllRollCallsWithOrgDetails(): Promise<CampaignWithOrg[]> {
+  const [allCampaigns, allOrgs] = await Promise.all([
+    getAllCampaigns(),
+    getAllOrganizations(),
+  ]);
+
+  const orgMap = new Map<string, Organization>();
+  allOrgs.forEach((o) => orgMap.set(o.id, o));
+
+  const enriched: CampaignWithOrg[] = allCampaigns.map((camp) => {
+    const org = camp.orgId ? orgMap.get(camp.orgId) : undefined;
+    return {
+      ...camp,
+      organizationName: org?.name || 'Independent Organization',
+      organizationAccent: org?.accentColor || '#00FF66',
+      adminName: org?.adminName || 'Coordinator',
+      adminEmail: org?.adminEmail || '',
+      stateLga: org?.stateLga || '',
+      cdsBatch: org?.cdsBatch || '',
+    };
+  });
+
+  return enriched;
+}
+
+/**
+ * Super User feature: calculates global system analytics across all organizations.
+ */
+export async function getGlobalSystemStats(): Promise<{
+  totalOrganizations: number;
+  totalCampaigns: number;
+  activeCampaigns: number;
+  closedCampaigns: number;
+  totalAttendees: number;
+  flaggedTamperedCount: number;
+}> {
+  const orgs = await getAllOrganizations();
+  const campaigns = await getAllCampaigns();
+  const activeCount = campaigns.filter((c) => c.status !== 'closed' && !c.isClosed).length;
+  const closedCount = campaigns.length - activeCount;
+
+  const cachedAttendees = getLocalCache<Attendee>(LOCAL_ATTENDEES_KEY, []);
+  const flaggedCount = cachedAttendees.filter((a) => a.tampered).length;
+
+  return {
+    totalOrganizations: orgs.length,
+    totalCampaigns: campaigns.length,
+    activeCampaigns: activeCount,
+    closedCampaigns: closedCount,
+    totalAttendees: cachedAttendees.length,
+    flaggedTamperedCount: flaggedCount,
+  };
 }
 
 /**

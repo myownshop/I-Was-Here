@@ -208,10 +208,18 @@ export default function App() {
   const handleAuthSuccess = (org: Organization, profile?: UserProfile, isNewSignUp?: boolean) => {
     setCurrentOrg(org);
     if (profile) setCurrentUserProfile(profile);
-    // If newly signed up or profile details are not yet completed, redirect to settings page first
-    if (isNewSignUp || !org.stateLga || !org.cdsBatch) {
+
+    const hasEnteredBefore =
+      typeof window !== 'undefined' &&
+      localStorage.getItem(`iwh_has_entered_portal_${org.id}`) === 'true';
+
+    // Profile & Settings only shows first when entering the app for the very first time on new sign-up
+    if (isNewSignUp && !hasEnteredBefore) {
       setIsFirstSetup(true);
       setInitialPortalTab('settings');
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(`iwh_has_entered_portal_${org.id}`, 'true');
+      }
     } else {
       setIsFirstSetup(false);
       setInitialPortalTab('sessions');
@@ -280,6 +288,7 @@ export default function App() {
         ) : (
           <AdminPortal
             currentOrg={currentOrg}
+            currentUserProfile={currentUserProfile}
             onLaunchAttendeeFlow={handleLaunchAttendeeFlow}
             onSignOut={currentUserProfile ? handleSignOut : undefined}
             onNavigateToAuth={() => handleViewChange('auth')}

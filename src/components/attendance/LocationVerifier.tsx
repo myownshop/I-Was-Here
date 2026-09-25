@@ -504,20 +504,44 @@ export const LocationVerifier: React.FC<LocationVerifierProps> = ({
             </div>
           </div>
 
-          {/* Detailed Warning or Success Subtext */}
-          <div className="mt-3 pt-2.5 border-t border-white/5 text-xs">
+          {/* Detailed Warning or Success Subtext & Navigation Actions */}
+          <div className="mt-3 pt-2.5 border-t border-white/5 space-y-2 text-xs">
             {isWithin ? (
               <p className="text-[#39FF14] font-medium flex items-center gap-1.5">
                 <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
                 <span>Geofence verification passed. You are physically present at the CDS venue.</span>
               </p>
             ) : (
-              <p className="text-rose-400 font-medium flex items-center gap-1.5">
-                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-                <span>
-                  You are {Math.round(distance - allowedRadius)}m beyond the permitted geofence. Please move closer to the venue center to complete attendance.
-                </span>
-              </p>
+              <div className="space-y-2.5">
+                <p className="text-rose-400 font-medium flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+                  <span>
+                    You are {Math.round(distance - allowedRadius)}m beyond the permitted geofence. Please move closer to the venue center to complete attendance.
+                  </span>
+                </p>
+
+                <div className="flex items-center gap-2 pt-1 flex-wrap">
+                  <a
+                    href={`https://www.google.com/maps/dir/?api=1&destination=${adminTarget.lat},${adminTarget.lng}&travelmode=walking`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1.5 rounded-lg bg-[#39FF14] hover:bg-[#32e012] text-black font-extrabold text-xs flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
+                  >
+                    <Navigation className="w-3.5 h-3.5 text-black" />
+                    <span>Navigate in Google Maps</span>
+                  </a>
+
+                  <button
+                    type="button"
+                    onClick={handleAcquireLocation}
+                    disabled={loading}
+                    className="px-3 py-1.5 rounded-lg bg-[#182333] hover:bg-[#223147] text-slate-200 hover:text-white font-bold text-xs border border-[#2c3d56] flex items-center gap-1.5 transition-all cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-[#39FF14]' : ''}`} />
+                    <span>Re-check Distance</span>
+                  </button>
+                </div>
+              </div>
             )}
           </div>
         </div>

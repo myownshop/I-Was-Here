@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { MapPin, Navigation, RefreshCw, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { MapPin, Navigation, RefreshCw, AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
 import { Campaign, GeoLocationCoordinates } from '../../types/attendance';
-import { calculateHaversineDistance, getCurrentCoordinates, formatDistance } from '../../utils/geo';
+import { calculateHaversineDistance, getCurrentCoordinates, formatDistance, getWalkingTimeEstimate } from '../../utils/geo';
 import { VenueGuidanceMap } from './VenueGuidanceMap';
 
 interface GeofenceStatusProps {
@@ -149,10 +149,14 @@ export function GeofenceStatus({
             </div>
 
             {!isWithin && (
-              <div className="mt-2.5">
-                <p className="text-[11px] text-amber-300 font-medium leading-tight">
-                  ⚠️ You are currently {formatDistance(distance)} from the venue center. Follow the live map below to walk inside the {campaign.allowedRadius}m zone.
+              <div className="mt-2.5 flex items-center justify-between text-[11px] text-amber-300 font-medium">
+                <p>
+                  ⚠️ You are {formatDistance(distance)} from venue. Follow map to step inside the {campaign.allowedRadius}m zone.
                 </p>
+                <span className="shrink-0 font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                  <Clock className="w-3 h-3" />
+                  <span>{getWalkingTimeEstimate(distance)}</span>
+                </span>
               </div>
             )}
           </div>

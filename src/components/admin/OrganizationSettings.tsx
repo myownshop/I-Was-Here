@@ -4,7 +4,6 @@ import {
   User,
   Mail,
   MapPin,
-  Calendar,
   Clock,
   Sparkles,
   Save,
@@ -19,10 +18,11 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import { Organization } from '../../types/attendance';
-import { updateOrganization, clearOrganizationCampaignsAndAttendees } from '../../services/firebase';
+import { updateOrganization, clearOrganizationCampaignsAndAttendees, isSuperUserLoggedIn } from '../../services/firebase';
 import { showToast } from '../common/Toast';
 import { ShareQRModal } from '../common/ShareQRModal';
 import { GoogleMapsLinkInput } from '../common/GoogleMapsLinkInput';
+import { SuperUserSettings } from './SuperUserSettings';
 
 interface OrganizationSettingsProps {
   organization: Organization;
@@ -52,7 +52,6 @@ export function OrganizationSettings({
   const [name, setName] = useState(organization.name || '');
   const [adminName, setAdminName] = useState(organization.adminName || '');
   const [adminEmail, setAdminEmail] = useState(organization.adminEmail || '');
-  const [cdsBatch, setCdsBatch] = useState(organization.cdsBatch || '');
   const [stateLga, setStateLga] = useState(organization.stateLga || '');
   const [meetingSchedule, setMeetingSchedule] = useState(organization.meetingSchedule || '');
   const [description, setDescription] = useState(organization.description || '');
@@ -144,7 +143,6 @@ export function OrganizationSettings({
         adminEmail: adminEmail.trim(),
         accentColor: accentColor || '#00FF66',
         stateLga: stateLga.trim(),
-        cdsBatch: cdsBatch.trim(),
         meetingSchedule: meetingSchedule.trim(),
         description: description.trim(),
         defaultVenueName: defaultVenueName.trim(),
@@ -156,6 +154,10 @@ export function OrganizationSettings({
       const updated = await updateOrganization(organization.id, updates);
       onOrganizationUpdated(updated);
       showToast('success', 'Organization profile & settings updated successfully!', 'Saved');
+
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(`iwh_has_entered_portal_${organization.id}`, 'true');
+      }
 
       if (isFirstSetup && onCompleteSetup) {
         onCompleteSetup();
@@ -238,6 +240,21 @@ export function OrganizationSettings({
         </div>
       )}
 
+      {/* Super User Account & Password Credentials Box */}
+      {(isSuperUserLoggedIn() || organization.id === 'all') && (
+        <SuperUserSettings
+          onCredentialsUpdated={(updated) => {
+            if (organization.id === 'all') {
+              onOrganizationUpdated({
+                ...organization,
+                adminName: updated.name,
+                adminEmail: updated.email,
+              });
+            }
+          }}
+        />
+      )}
+
       {/* Main Settings Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-[#1b2332]">
         <div>
@@ -289,7 +306,7 @@ export function OrganizationSettings({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 md:col-span-2">
               <label
                 htmlFor="input-org-name"
                 className="text-xs font-bold text-slate-300 block flex items-center justify-between"
@@ -306,27 +323,6 @@ export function OrganizationSettings({
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="e.g. Digital Literacy CDS, Ikeja"
-                  className="w-full bg-[#090c12] border border-[#212c3e] rounded-xl pl-9 pr-3.5 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-[#00FF66] transition-colors"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <label
-                htmlFor="input-cds-batch"
-                className="text-xs font-bold text-slate-300 block flex items-center justify-between"
-              >
-                <span>CDS Batch / Stream</span>
-                <span className="text-[10px] text-slate-500">e.g. 2024 Batch B Stream 1</span>
-              </label>
-              <div className="relative">
-                <Calendar className="w-4 h-4 absolute left-3 top-3 text-slate-500" />
-                <input
-                  id="input-cds-batch"
-                  type="text"
-                  value={cdsBatch}
-                  onChange={(e) => setCdsBatch(e.target.value)}
-                  placeholder="e.g. 2024 Batch B Stream 1"
                   className="w-full bg-[#090c12] border border-[#212c3e] rounded-xl pl-9 pr-3.5 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-[#00FF66] transition-colors"
                 />
               </div>
@@ -687,7 +683,7 @@ export function OrganizationSettings({
         isOpen={isShareModalOpen}
         onClose={() => setIsShareModalOpen(false)}
         title={`${name || 'Organization'} Attendance`}
-        subtitle={`${stateLga || ''} ${cdsBatch ? '• ' + cdsBatch : ''}`}
+        subtitle={stateLga ? `${stateLga} • Official Roll Call` : 'Official Attendance Roll Call'}
         shareUrl={shareUrl}
         accentColor={accentColor}
       />

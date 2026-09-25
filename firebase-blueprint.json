@@ -104,7 +104,7 @@
         "role": {
           "type": "string",
           "description": "User role",
-          "enum": ["admin"]
+          "enum": ["admin", "superuser"]
         },
         "createdAt": {
           "type": "string",
@@ -239,6 +239,37 @@
         }
       },
       "required": ["campaignId", "name", "stateCode", "photoUrl", "latitude", "longitude", "distanceMeters", "timestamp"]
+    },
+    "SystemConfig": {
+      "title": "SystemConfig",
+      "description": "System-wide administrative configuration and credentials",
+      "type": "object",
+      "properties": {
+        "username": {
+          "type": "string",
+          "description": "Super user username",
+          "maxLength": 60
+        },
+        "password": {
+          "type": "string",
+          "description": "Super user password",
+          "maxLength": 128
+        },
+        "name": {
+          "type": "string",
+          "description": "Super user display name",
+          "maxLength": 100
+        },
+        "email": {
+          "type": "string",
+          "description": "Super user email",
+          "maxLength": 120
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Update timestamp"
+        }
+      }
     }
   },
   "firestore": {
@@ -261,6 +292,10 @@
     "/campaigns/{campaignId}/attendees/{attendeeId}": {
       "schema": "Attendee",
       "description": "Verified attendance records for a specific campaign"
+    },
+    "/system_config/{configId}": {
+      "schema": "SystemConfig",
+      "description": "System administrator configuration"
     }
   }
 }

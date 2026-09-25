@@ -17,8 +17,9 @@ import {
   Lock,
   ArrowLeft,
   Edit3,
+  Crown,
 } from 'lucide-react';
-import { Campaign, Attendee, Organization } from '../../types/attendance';
+import { Campaign, Attendee, Organization, UserProfile, CampaignWithOrg } from '../../types/attendance';
 import { CampaignQRCard } from './CampaignQRCard';
 import { AttendeeCard } from './AttendeeCard';
 import { DashboardWidget } from './DashboardWidget';
@@ -29,6 +30,7 @@ import { OfflineDataImporter } from './OfflineDataImporter';
 import { OrganizationSettings } from './OrganizationSettings';
 import { CloseSessionModal } from './CloseSessionModal';
 import { SessionHistoryView } from './SessionHistoryView';
+import { SuperUserHub } from './SuperUserHub';
 import { exportAttendeesToCsv } from '../../utils/csvExport';
 import { getWATDateString } from '../../utils/dateUtils';
 import {
@@ -37,22 +39,25 @@ import {
   getCampaignAttendees,
   closeCampaign,
   reopenCampaign,
+  getAllOrganizations,
 } from '../../services/firebase';
 import { formatDistance } from '../../utils/geo';
 import { showToast } from '../common/Toast';
 
 interface AdminPortalProps {
   currentOrg: Organization | null;
+  currentUserProfile?: UserProfile | null;
   onLaunchAttendeeFlow: (campaign: Campaign) => void;
   onSignOut?: () => void;
   onNavigateToAuth?: () => void;
-  initialTab?: 'active' | 'history' | 'settings' | 'sessions';
+  initialTab?: 'active' | 'history' | 'settings' | 'sessions' | 'superadmin';
   isFirstSetup?: boolean;
   onOrganizationUpdated?: (updated: Organization) => void;
 }
 
 export function AdminPortal({
   currentOrg,
+  currentUserProfile,
   onLaunchAttendeeFlow,
   onSignOut,
   onNavigateToAuth,
@@ -60,9 +65,12 @@ export function AdminPortal({
   isFirstSetup = false,
   onOrganizationUpdated,
 }: AdminPortalProps) {
-  const normalizedInitialTab = initialTab === 'sessions' ? 'active' : initialTab;
+  const isSuperUser = currentUserProfile?.role === 'superuser' || currentOrg?.id === 'all';
+  const defaultTab = isSuperUser && initialTab === 'active' ? 'superadmin' : (initialTab === 'sessions' ? 'active' : (initialTab || 'active'));
+
   const [activeOrg, setActiveOrg] = useState<Organization | null>(currentOrg);
-  const [activeTab, setActiveTab] = useState<'active' | 'history' | 'settings'>(normalizedInitialTab);
+  const [activeTab, setActiveTab] = useState<'active' | 'history' | 'settings' | 'superadmin'>(defaultTab);
+  const [allOrgs, setAllOrgs] = useState<Organization[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [selectedCampaignId, setSelectedCampaignId] = useState<string>('');
   const [attendees, setAttendees] = useState<Attendee[]>([]);
@@ -87,6 +95,15 @@ export function AdminPortal({
     }
   }, [currentOrg]);
 
+  // Load all organizations for Super User switcher
+  useEffect(() => {
+    if (isSuperUser) {
+      getAllOrganizations().then((orgList) => {
+        setAllOrgs(orgList);
+      });
+    }
+  }, [isSuperUser]);
+
   // Synchronize initialTab if provided
   useEffect(() => {
     if (initialTab) {
@@ -107,9 +124,14 @@ export function AdminPortal({
   const loadCampaigns = useCallback(async () => {
     if (!activeOrg) return;
     try {
-      let list = await getCampaignsForOrg(activeOrg.id);
-      if (list.length === 0) {
+      let list: Campaign[] = [];
+      if (activeOrg.id === 'all') {
         list = await getAllCampaigns();
+      } else {
+        list = await getCampaignsForOrg(activeOrg.id);
+        if (list.length === 0) {
+          list = await getAllCampaigns();
+        }
       }
       setCampaigns(list);
 
@@ -418,6 +440,49 @@ export function AdminPortal({
         </div>
 
         <div className="flex items-center space-x-2.5 flex-wrap">
+          {/* Super User Organization Quick Switcher */}
+          {isSuperUser && allOrgs.length > 0 && (
+            <div className="flex items-center gap-1.5 bg-[#141b27] border border-purple-500/40 py-1 px-2 rounded-xl">
+              <Crown className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+              <select
+                id="select-superuser-org"
+                value={activeOrg.id}
+                onChange={(e) => {
+                  const targetId = e.target.value;
+                  if (targetId === 'all') {
+                    setActiveOrg({
+                      id: 'all',
+                      name: 'Global Super Admin (All Organizations)',
+                      adminUid: 'superuser_admin_root',
+                      adminEmail: 'admin@iwashere.internal',
+                      adminName: 'Super Administrator',
+                      accentColor: '#A855F7',
+                      createdAt: new Date().toISOString(),
+                    });
+                    setActiveTab('superadmin');
+                  } else {
+                    const found = allOrgs.find((o) => o.id === targetId);
+                    if (found) {
+                      setActiveOrg(found);
+                      setActiveTab('active');
+                      showToast('info', `Switched view to ${found.name}`, 'Super User');
+                    }
+                  }
+                }}
+                className="bg-transparent text-xs font-bold text-purple-200 outline-none cursor-pointer max-w-[170px] truncate"
+              >
+                <option value="all" className="bg-[#0e1420] text-purple-300">
+                  🌐 Super Admin Hub (All Orgs)
+                </option>
+                {allOrgs.map((o) => (
+                  <option key={o.id} value={o.id} className="bg-[#0e1420] text-white">
+                    {o.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* Active Session Selector dropdown: Lists ONLY active sessions */}
           {activeTab === 'active' && activeCampaigns.length > 1 && !isSelectedClosed && (
             <select
@@ -529,8 +594,29 @@ export function AdminPortal({
         </div>
       </div>
 
-      {/* Main Tab Navigation Bar: Active Sessions | History | Profile & Settings */}
+      {/* Main Tab Navigation Bar: Active Sessions | History | Profile & Settings | Super Admin Hub */}
       <div className="flex items-center space-x-2 border-b border-[#1b2332] pb-3 overflow-x-auto">
+        {isSuperUser && (
+          <button
+            id="tab-btn-superadmin-hub"
+            type="button"
+            onClick={() => setActiveTab('superadmin')}
+            className={`py-2 px-4 rounded-xl text-xs font-bold flex items-center space-x-2 transition-all cursor-pointer whitespace-nowrap ${
+              activeTab === 'superadmin'
+                ? 'bg-purple-600 text-white shadow-lg'
+                : 'text-purple-300 hover:text-white bg-purple-950/30 border border-purple-500/30'
+            }`}
+          >
+            <Crown className="w-3.5 h-3.5 text-purple-300" />
+            <span>Super Admin Hub</span>
+            {allOrgs.length > 0 && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full font-mono font-black bg-purple-900/80 text-purple-200">
+                {allOrgs.length} Orgs
+              </span>
+            )}
+          </button>
+        )}
+
         <button
           id="tab-btn-active-sessions"
           type="button"
@@ -600,6 +686,25 @@ export function AdminPortal({
           <span>Profile &amp; Settings</span>
         </button>
       </div>
+
+      {/* Tab 0: Super Admin Hub (Global Master Directory & Roll Calls) */}
+      {activeTab === 'superadmin' && (
+        <SuperUserHub
+          onSelectOrganization={(org) => {
+            setActiveOrg(org);
+            setActiveTab('active');
+            showToast('info', `Switched view to ${org.name}`, 'Organization Context');
+          }}
+          onSelectCampaignForRoster={(camp, org) => {
+            if (org) setActiveOrg(org);
+            setSelectedCampaignId(camp.id);
+            setActiveTab('active');
+          }}
+          onLaunchCampaignSession={(camp) => {
+            onLaunchAttendeeFlow(camp);
+          }}
+        />
+      )}
 
       {/* Tab 1: Organization Settings & Profile */}
       {activeTab === 'settings' && (
