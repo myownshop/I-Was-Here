@@ -208,10 +208,8 @@ export const LocationVerifier: React.FC<LocationVerifierProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
 
-  // Read Google Maps API Key from Vite environment with default fallback
-  const apiKey =
-    (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string) ||
-    'AIzaSyAznahz6-4b5xG490CKSTDu9nXpllJukvY';
+  // Read Google Maps API Key strictly from Vite environment
+  const apiKey = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string) || '';
 
   // Google Maps JS API loader hook
   const { isLoaded, loadError } = useJsApiLoader({
@@ -355,8 +353,19 @@ export const LocationVerifier: React.FC<LocationVerifierProps> = ({
           </div>
         )}
 
-        {/* Google Maps Render */}
-        {isLoaded && !loadError && apiKey ? (
+        {/* Map Rendering or Missing Config Error State */}
+        {!apiKey ? (
+          <div className="w-full h-full flex flex-col items-center justify-center p-6 bg-[#0d121c] text-center space-y-3">
+            <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+            <div className="max-w-xs space-y-1">
+              <p className="text-sm font-semibold text-amber-300">
+                Map configuration missing — contact your administrator
+              </p>
+            </div>
+          </div>
+        ) : isLoaded && !loadError ? (
           <GoogleMap
             mapContainerStyle={MAP_CONTAINER_STYLE}
             center={centerCoords}

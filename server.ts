@@ -4,6 +4,17 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 
+// Clean up any global __dirname injected by tsx to prevent breakage in ESM libraries
+try {
+  delete (globalThis as Record<string, unknown>).__dirname;
+  Object.defineProperty(globalThis, '__dirname', {
+    get: () => undefined,
+    configurable: true,
+  });
+} catch {
+  // Ignore definition errors
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -271,7 +282,8 @@ async function bootstrap() {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: process.env.DISABLE_HMR !== 'true',
+        hmr: false,
+        ws: false,
       },
       appType: 'spa',
     });

@@ -159,6 +159,47 @@ export default function App() {
     };
   }, [parseRoute]);
 
+  // Dynamic page titles and meta descriptions per view
+  useEffect(() => {
+    const VIEW_METADATA: Record<AppView, { title: string; description: string }> = {
+      home: {
+        title: 'IWasHere — Attendance Made Simple',
+        description: 'Track attendance the easy way — location check-in, photo verification, and real-time reports for your organization.',
+      },
+      attend: {
+        title: 'Mark Attendance — IWasHere',
+        description: 'Verify your location and submit your attendance check-in.',
+      },
+      portal: {
+        title: 'Coordinator Portal — IWasHere',
+        description: 'Manage attendance sessions, member rosters, and organization settings.',
+      },
+      auth: {
+        title: 'Sign In — IWasHere',
+        description: 'Sign in to access your organization dashboard and roll call management.',
+      },
+    };
+
+    const currentMeta = VIEW_METADATA[view] || VIEW_METADATA.home;
+
+    document.title = currentMeta.title;
+
+    const metaDescription = document.querySelector('meta[name="description"]');
+    if (metaDescription) {
+      metaDescription.setAttribute('content', currentMeta.description);
+    }
+
+    const ogTitle = document.querySelector('meta[property="og:title"]');
+    if (ogTitle) {
+      ogTitle.setAttribute('content', currentMeta.title);
+    }
+
+    const ogDescription = document.querySelector('meta[property="og:description"]');
+    if (ogDescription) {
+      ogDescription.setAttribute('content', currentMeta.description);
+    }
+  }, [view]);
+
   const handleViewChange = (newView: AppView) => {
     setView(newView);
     if (newView === 'portal') {
@@ -303,10 +344,10 @@ export default function App() {
       <footer className="py-5 border-t border-[#161c26] text-center text-xs text-slate-400">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2.5">
           <p className="font-medium tracking-wide">
-            {currentOrg?.name || 'IWasHere'} • Multi-Tenant Biometric Attendance PWA
+            {currentOrg?.name || 'IWasHere'} • Attendance tracking made simple
           </p>
           <p className="text-[11px] text-slate-400">
-            Encrypted Offline Sync (.iwh) • Precise Geofencing • Liveness Verification
+            Location check-in • Photo verification • Real-time reports
           </p>
         </div>
       </footer>

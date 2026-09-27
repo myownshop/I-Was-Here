@@ -1,5 +1,5 @@
 {
-  "name": "react-example",
+  "name": "iwashere",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -13,7 +13,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@google/genai": "^2.4.0",
     "@react-google-maps/api": "^2.20.8",
     "@tailwindcss/vite": "^4.3.3",
     "@types/crypto-js": "^4.2.2",

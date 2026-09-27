@@ -24,7 +24,6 @@ import {
   getDocFromServer,
 } from 'firebase/firestore';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import firebaseConfig from '../../firebase-applet-config.json';
 import {
   Campaign,
   Attendee,
@@ -38,21 +37,59 @@ import {
 } from '../types/attendance';
 import { calculateHaversineDistance } from '../utils/geo';
 
-// Initialize Firebase App
+// Initialize Firebase App from environment variables with safe defaults for local/preview modes
+const envApiKey = import.meta.env.VITE_FIREBASE_API_KEY;
+const isPlaceholderKey = !envApiKey || envApiKey.startsWith('YOUR_') || envApiKey.startsWith('MY_');
+
+const firebaseConfig = {
+  apiKey: !isPlaceholderKey ? envApiKey : 'AIzaSyPlaceholderKeyForLocalDevelopment',
+  authDomain:
+    import.meta.env.VITE_FIREBASE_AUTH_DOMAIN && !import.meta.env.VITE_FIREBASE_AUTH_DOMAIN.startsWith('YOUR_')
+      ? import.meta.env.VITE_FIREBASE_AUTH_DOMAIN
+      : 'iwashere-preview.firebaseapp.com',
+  projectId:
+    import.meta.env.VITE_FIREBASE_PROJECT_ID && !import.meta.env.VITE_FIREBASE_PROJECT_ID.startsWith('YOUR_')
+      ? import.meta.env.VITE_FIREBASE_PROJECT_ID
+      : 'iwashere-preview',
+  storageBucket:
+    import.meta.env.VITE_FIREBASE_STORAGE_BUCKET && !import.meta.env.VITE_FIREBASE_STORAGE_BUCKET.startsWith('YOUR_')
+      ? import.meta.env.VITE_FIREBASE_STORAGE_BUCKET
+      : 'iwashere-preview.appspot.com',
+  messagingSenderId:
+    import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID &&
+    !import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID.startsWith('YOUR_')
+      ? import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID
+      : '1234567890',
+  appId:
+    import.meta.env.VITE_FIREBASE_APP_ID && !import.meta.env.VITE_FIREBASE_APP_ID.startsWith('YOUR_')
+      ? import.meta.env.VITE_FIREBASE_APP_ID
+      : '1:1234567890:web:1234567890',
+};
+
+const rawDbId = import.meta.env.VITE_FIREBASE_DATABASE_ID;
+const firestoreDatabaseId =
+  rawDbId && !rawDbId.startsWith('YOUR_') && !rawDbId.startsWith('MY_')
+    ? rawDbId
+    : undefined;
+
 const app = initializeApp(firebaseConfig);
 
 // CRITICAL: Initialize Firestore with experimentalForceLongPolling for robust connection in iframe/proxy environments
 let firestoreDb;
 try {
-  firestoreDb = initializeFirestore(
-    app,
-    {
-      experimentalForceLongPolling: true,
-    },
-    firebaseConfig.firestoreDatabaseId
-  );
+  firestoreDb = firestoreDatabaseId
+    ? initializeFirestore(
+        app,
+        {
+          experimentalForceLongPolling: true,
+        },
+        firestoreDatabaseId
+      )
+    : initializeFirestore(app, {
+        experimentalForceLongPolling: true,
+      });
 } catch {
-  firestoreDb = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  firestoreDb = firestoreDatabaseId ? getFirestore(app, firestoreDatabaseId) : getFirestore(app);
 }
 
 export const db = firestoreDb;

@@ -262,9 +262,9 @@ export function OrganizationSettings({
             <Building2 className="w-3.5 h-3.5" />
             <span>COORDINATOR PORTAL SETTINGS</span>
           </div>
-          <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+          <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
             Organization Profile &amp; Venue
-          </h1>
+          </h2>
           <p className="text-xs text-slate-400">
             Configure your CDS body, meeting schedule, default GPS geofence, and brand theme.
           </p>
