@@ -39,40 +39,51 @@ import {
 import { calculateHaversineDistance } from '../utils/geo';
 import { parseCampaignDate } from '../utils/dateUtils';
 
+// Default project credentials for the IWasHere application
+const DEFAULT_FIREBASE_CONFIG = {
+  apiKey: 'AIzaSyCkNMjZN-Gd28I6Zt-d2TrJBbbhOoG8xTk',
+  authDomain: 'gen-lang-client-0333885172.firebaseapp.com',
+  projectId: 'gen-lang-client-0333885172',
+  storageBucket: 'gen-lang-client-0333885172.firebasestorage.app',
+  messagingSenderId: '907614203605',
+  appId: '1:907614203605:web:e023dea66b7bfd80d5bc5c',
+  databaseId: 'ai-studio-ca7b28f3-1445-4796-a4ef-7a4db6a02fa8',
+};
+
 // Initialize Firebase App from environment variables with safe defaults for local/preview modes
 const envApiKey = import.meta.env.VITE_FIREBASE_API_KEY;
 const isPlaceholderKey = !envApiKey || envApiKey.startsWith('YOUR_') || envApiKey.startsWith('MY_');
 
 const firebaseConfig = {
-  apiKey: !isPlaceholderKey ? envApiKey : 'AIzaSyPlaceholderKeyForLocalDevelopment',
+  apiKey: !isPlaceholderKey ? envApiKey : DEFAULT_FIREBASE_CONFIG.apiKey,
   authDomain:
     import.meta.env.VITE_FIREBASE_AUTH_DOMAIN && !import.meta.env.VITE_FIREBASE_AUTH_DOMAIN.startsWith('YOUR_')
       ? import.meta.env.VITE_FIREBASE_AUTH_DOMAIN
-      : 'iwashere-preview.firebaseapp.com',
+      : DEFAULT_FIREBASE_CONFIG.authDomain,
   projectId:
     import.meta.env.VITE_FIREBASE_PROJECT_ID && !import.meta.env.VITE_FIREBASE_PROJECT_ID.startsWith('YOUR_')
       ? import.meta.env.VITE_FIREBASE_PROJECT_ID
-      : 'iwashere-preview',
+      : DEFAULT_FIREBASE_CONFIG.projectId,
   storageBucket:
     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET && !import.meta.env.VITE_FIREBASE_STORAGE_BUCKET.startsWith('YOUR_')
       ? import.meta.env.VITE_FIREBASE_STORAGE_BUCKET
-      : 'iwashere-preview.appspot.com',
+      : DEFAULT_FIREBASE_CONFIG.storageBucket,
   messagingSenderId:
     import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID &&
     !import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID.startsWith('YOUR_')
       ? import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID
-      : '1234567890',
+      : DEFAULT_FIREBASE_CONFIG.messagingSenderId,
   appId:
     import.meta.env.VITE_FIREBASE_APP_ID && !import.meta.env.VITE_FIREBASE_APP_ID.startsWith('YOUR_')
       ? import.meta.env.VITE_FIREBASE_APP_ID
-      : '1:1234567890:web:1234567890',
+      : DEFAULT_FIREBASE_CONFIG.appId,
 };
 
 const rawDbId = import.meta.env.VITE_FIREBASE_DATABASE_ID;
 const firestoreDatabaseId =
   rawDbId && !rawDbId.startsWith('YOUR_') && !rawDbId.startsWith('MY_')
     ? rawDbId
-    : undefined;
+    : DEFAULT_FIREBASE_CONFIG.databaseId;
 
 const app = initializeApp(firebaseConfig);
 

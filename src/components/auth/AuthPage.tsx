@@ -295,7 +295,9 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend, onNavigateToHome }
     } catch (err: unknown) {
       const originalMsg = err instanceof Error ? err.message : 'Registration failed.';
       let msg = originalMsg;
-      if (originalMsg.includes('auth/operation-not-allowed')) {
+      if (originalMsg.includes('auth/api-key-not-valid')) {
+        msg = 'Firebase API key configuration is missing or invalid. Please check your Firebase settings.';
+      } else if (originalMsg.includes('auth/operation-not-allowed')) {
         msg =
           'Email/Password sign-in is not enabled in Firebase Console. Please enable "Email/Password" under Authentication -> Sign-in method, or sign in using Google.';
       } else if (originalMsg.includes('auth/email-already-in-use')) {
@@ -333,7 +335,9 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend, onNavigateToHome }
     } catch (err: unknown) {
       const originalMsg = err instanceof Error ? err.message : 'Authentication failed.';
       let msg = originalMsg;
-      if (originalMsg.includes('auth/operation-not-allowed')) {
+      if (originalMsg.includes('auth/api-key-not-valid')) {
+        msg = 'Firebase API key configuration is missing or invalid. Please check your Firebase settings.';
+      } else if (originalMsg.includes('auth/operation-not-allowed')) {
         msg =
           'Email/Password sign-in is not enabled in Firebase Console. Please enable "Email/Password" under Firebase Console -> Authentication -> Sign-in method, or sign in using Google.';
       } else if (originalMsg.includes('auth/invalid-credential') || originalMsg.includes('auth/wrong-password')) {
@@ -362,7 +366,11 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend, onNavigateToHome }
         onAuthSuccess(res.org, undefined, isNew);
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Google authentication failed.';
+      const originalMsg = err instanceof Error ? err.message : 'Google authentication failed.';
+      let msg = originalMsg;
+      if (originalMsg.includes('auth/api-key-not-valid')) {
+        msg = 'Firebase API key configuration is missing or invalid. Please check your Firebase settings.';
+      }
       setError(msg);
       showToast('error', msg);
     } finally {
