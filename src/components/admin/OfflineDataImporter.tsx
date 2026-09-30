@@ -22,6 +22,7 @@ interface ImportItemStatus {
   distanceMeters?: number;
   isTampered?: boolean;
   isLate?: boolean;
+  isOutsideWindow?: boolean;
   timeBlockCode?: string;
 }
 
@@ -76,11 +77,12 @@ export function OfflineDataImporter({
           filename: file.name,
           stateCode: record.stateCode,
           name: record.name,
-          status: 'success',
+          status: outcome.isOutsideWindow ? 'error' : 'success',
           message: outcome.message,
           distanceMeters: outcome.distanceMeters,
           isTampered: outcome.isTampered,
           isLate: outcome.isLate,
+          isOutsideWindow: outcome.isOutsideWindow,
           timeBlockCode: record.timeBlockCode,
         };
       } catch (err: unknown) {
@@ -94,11 +96,16 @@ export function OfflineDataImporter({
     });
 
     const results = await Promise.all(importPromises);
-    const successCount = results.filter((r) => r.status === 'success').length;
+    const successCount = results.filter((r) => r.status === 'success' && !r.isOutsideWindow).length;
     const tamperedCount = results.filter((r) => r.isTampered).length;
+    const outsideWindowCount = results.filter((r) => r.isOutsideWindow).length;
 
     setImportResults((prev) => [...results, ...prev]);
     setIsProcessing(false);
+
+    if (outsideWindowCount > 0) {
+      showToast('error', `⛔ Rejected ${outsideWindowCount} record(s): Outside Allowed Window!`);
+    }
 
     if (tamperedCount > 0) {
       showToast('error', `⚠️ Flagged ${tamperedCount} record(s) with OS clock tampering!`);
@@ -108,7 +115,7 @@ export function OfflineDataImporter({
       showToast('success', `Imported ${successCount} verified offline attendance record(s).`);
       onRecordsImported();
     } else if (results.some((r) => r.status === 'error')) {
-      showToast('error', 'One or more .iwh files failed cryptographic verification.');
+      showToast('error', 'One or more .iwh files failed verification or were rejected.');
     }
   };
 
@@ -232,11 +239,14 @@ export function OfflineDataImporter({
           </h4>
           <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
             {importResults.map((item, idx) => {
+              const isOutsideWindow = item.isOutsideWindow;
               const isTampered = item.isTampered;
               const isLate = item.isLate;
 
               let cardBg = 'bg-emerald-950/20 border-emerald-500/30 text-emerald-200';
-              if (item.status === 'error' || isTampered) {
+              if (isOutsideWindow) {
+                cardBg = 'bg-rose-950/80 border-rose-500 text-rose-100 shadow-[0_0_18px_rgba(244,63,94,0.35)] ring-1 ring-rose-500';
+              } else if (item.status === 'error' || isTampered) {
                 cardBg = 'bg-rose-950/40 border-rose-500/60 text-rose-100 shadow-[0_0_12px_rgba(244,63,94,0.15)]';
               } else if (isLate) {
                 cardBg = 'bg-amber-950/30 border-amber-500/40 text-amber-100';
@@ -248,7 +258,7 @@ export function OfflineDataImporter({
                   className={`p-3 rounded-xl border text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${cardBg}`}
                 >
                   <div className="flex items-start gap-2.5 min-w-0">
-                    {isTampered ? (
+                    {isOutsideWindow || isTampered ? (
                       <AlertTriangle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5 animate-pulse" />
                     ) : item.status === 'success' ? (
                       <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
@@ -265,12 +275,17 @@ export function OfflineDataImporter({
                             • {item.name}
                           </span>
                         )}
-                        {isTampered && (
+                        {isOutsideWindow && (
+                          <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-rose-600 text-white border border-rose-400 shadow-[0_0_10px_rgba(225,29,72,0.8)]">
+                            ⛔ REJECTED: OUTSIDE ALLOWED WINDOW
+                          </span>
+                        )}
+                        {isTampered && !isOutsideWindow && (
                           <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-rose-600 text-white shadow-sm">
                             ⚠️ CLOCK MANIPULATED
                           </span>
                         )}
-                        {isLate && !isTampered && (
+                        {isLate && !isTampered && !isOutsideWindow && (
                           <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-500 text-black">
                             ⏱️ LATE OVERRIDE
                           </span>
@@ -281,7 +296,7 @@ export function OfflineDataImporter({
                           </span>
                         )}
                       </div>
-                      <p className="text-[11px] opacity-85 mt-0.5">{item.message}</p>
+                      <p className="text-[11px] opacity-85 mt-0.5 font-medium">{item.message}</p>
                     </div>
                   </div>
 

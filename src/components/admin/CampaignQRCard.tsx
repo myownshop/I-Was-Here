@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import QRCode from 'qrcode';
-import { Download, Copy, Check, ExternalLink, QrCode as QrIcon, Share2, Lock, RotateCcw, Edit3 } from 'lucide-react';
+import { Download, Copy, Check, ExternalLink, QrCode as QrIcon, Share2, Lock, RotateCcw, Edit3, Clock } from 'lucide-react';
 import { Campaign } from '../../types/attendance';
 import { showToast } from '../common/Toast';
 import { ShareQRModal } from '../common/ShareQRModal';
@@ -133,7 +133,7 @@ export function CampaignQRCard({
             </div>
 
             <h3 className="text-lg font-black text-white truncate">{campaign.name}</h3>
-            <p className="text-xs text-slate-400 mt-0.5 mb-4">
+            <p className="text-xs text-slate-400 mt-0.5 mb-2">
               CDS Date: <span className="text-slate-200 font-medium">{campaign.date}</span> • Allowed Radius:{' '}
               <span className="font-medium" style={{ color: isClosed ? '#94a3b8' : accentColor }}>
                 {campaign.allowedRadius}m
@@ -144,6 +144,18 @@ export function CampaignQRCard({
                 </span>
               )}
             </p>
+
+            {/* Scheduled Window Badge */}
+            {(campaign.startTime || campaign.endTime) && (
+              <div className="flex items-center gap-2 mb-3 text-xs font-mono">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#141d2c] border border-[#233249] text-slate-300">
+                  <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span>
+                    Schedule: {campaign.startTime ? formatWATTime(campaign.startTime, { hour12: true }) : 'Open'} — {campaign.endTime ? formatWATTime(campaign.endTime, { hour12: true }) : 'Open'} WAT
+                  </span>
+                </span>
+              </div>
+            )}
 
             {/* Prominent Short Code Display */}
             <div className="bg-[#0a0d13] rounded-xl p-3 border border-[#1b2332] mb-4">

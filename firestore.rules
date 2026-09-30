@@ -46,9 +46,17 @@ service cloud.firestore {
         && data.allowedRadius is number
         && data.shortCode is string && data.shortCode.size() == 5
         && (!('timeBlocks' in data) || (data.timeBlocks is list))
+        && (!('startTime' in data) || (data.startTime is timestamp || data.startTime is string || data.startTime == null))
+        && (!('endTime' in data) || (data.endTime is timestamp || data.endTime is string || data.endTime == null))
         && (!('status' in data) || (data.status is string && data.status in ['active', 'closed']))
         && (!('isClosed' in data) || (data.isClosed is bool))
         && (!('closedAt' in data) || (data.closedAt is string || data.closedAt == null));
+    }
+
+    function isWithinCampaignWindow(campaignId) {
+      let campaign = get(/databases/$(database)/documents/campaigns/$(campaignId)).data;
+      return (!('startTime' in campaign) || request.time >= campaign.startTime)
+          && (!('endTime' in campaign) || request.time <= campaign.endTime);
     }
 
     function isValidShortLink(data) {
@@ -102,12 +110,21 @@ service cloud.firestore {
       allow delete: if isSignedIn() && isValidId(campaignId)
                     && (resource.data.orgId == getUserOrgId());
 
+      // Online Security: Enforce schedule time window on attendance subcollection using request.time
+      match /attendance/{userId} {
+        allow get, list: if true;
+        // Strictly verify request.time falls between parent campaign startTime and endTime
+        allow create: if isWithinCampaignWindow(campaignId);
+        allow update, delete: if isSignedIn();
+      }
+
       // Attendees in a campaign
       match /attendees/{attendeeId} {
         // Attendance records readable for admin & dashboard
         allow get, list: if true;
-        // Attendees submit their record or admin imports offline .iwh file
-        allow create: if isValidId(attendeeId) && isValidAttendee(request.resource.data);
+        // Attendees submit their record or admin imports offline .iwh file within scheduled window
+        allow create: if isValidId(attendeeId) && isValidAttendee(request.resource.data)
+                      && isWithinCampaignWindow(campaignId);
         allow delete: if isSignedIn();
       }
     }

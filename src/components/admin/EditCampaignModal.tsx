@@ -22,6 +22,7 @@ import { generateShortCode } from '../../utils/nysc';
 import { getCurrentCoordinates } from '../../utils/geo';
 import { updateCampaign, deleteCampaign } from '../../services/firebase';
 import { showToast } from '../common/Toast';
+import { toDateTimeLocalInputString } from '../../utils/dateUtils';
 
 interface EditCampaignModalProps {
   isOpen: boolean;
@@ -48,6 +49,8 @@ export function EditCampaignModal({
   const [shortCode, setShortCode] = useState<string>('');
   const [status, setStatus] = useState<'active' | 'closed'>('active');
   const [timeBlocks, setTimeBlocks] = useState<TimeBlock[]>([]);
+  const [startTime, setStartTime] = useState<string>('');
+  const [endTime, setEndTime] = useState<string>('');
 
   const [locating, setLocating] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
@@ -59,6 +62,8 @@ export function EditCampaignModal({
     if (campaign) {
       setName(campaign.name);
       setDate(campaign.date);
+      setStartTime(toDateTimeLocalInputString(campaign.startTime));
+      setEndTime(toDateTimeLocalInputString(campaign.endTime));
       setTargetLat(String(campaign.targetLatitude));
       setTargetLng(String(campaign.targetLongitude));
       setAllowedRadius(campaign.allowedRadius || 100);
@@ -165,6 +170,19 @@ export function EditCampaignModal({
       return;
     }
 
+    if (startTime && endTime) {
+      const sDate = new Date(startTime);
+      const eDate = new Date(endTime);
+      if (isNaN(sDate.getTime()) || isNaN(eDate.getTime())) {
+        showToast('error', 'Please provide valid start and end times.', 'Invalid Times');
+        return;
+      }
+      if (sDate >= eDate) {
+        showToast('error', 'Session End Time must be later than Start Time.', 'Schedule Invalid');
+        return;
+      }
+    }
+
     setSaving(true);
     try {
       const isNowClosed = status === 'closed';
@@ -176,6 +194,8 @@ export function EditCampaignModal({
         allowedRadius: Number(allowedRadius),
         shortCode: shortCode.toLowerCase().trim(),
         timeBlocks: timeBlocks.length > 0 ? timeBlocks : undefined,
+        startTime: startTime ? startTime : null,
+        endTime: endTime ? endTime : null,
         status,
         isClosed: isNowClosed,
         closedAt: isNowClosed ? campaign.closedAt || new Date().toISOString() : undefined,
@@ -309,6 +329,64 @@ export function EditCampaignModal({
                   value={date}
                   onChange={(e) => setDate(e.target.value)}
                   className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-[#141a24] border border-[#243044] text-xs font-medium text-white focus:outline-none focus:border-[#00FF66]"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Automated Schedule Window Section */}
+          <div className="p-4 rounded-2xl bg-[#121824] border border-[#212c3e] space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                <Clock className="w-4 h-4 text-[#00FF66]" />
+                Automated Schedule Window
+              </span>
+              <div className="flex items-center gap-2">
+                {startTime || endTime ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStartTime('');
+                      setEndTime('');
+                    }}
+                    className="text-[10px] text-rose-400 hover:text-rose-300 font-mono transition-colors cursor-pointer"
+                  >
+                    Clear Timer
+                  </button>
+                ) : null}
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#00FF66]/10 text-[#00FF66] border border-[#00FF66]/20">
+                  Countdown & Auto-Lock
+                </span>
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              When configured, attendees see a countdown timer until the session opens, and submissions auto-lock when it expires.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="input-edit-campaign-start-time" className="text-[10px] text-slate-400 font-mono block mb-1">
+                  Start Time (Unlock)
+                </label>
+                <input
+                  id="input-edit-campaign-start-time"
+                  type="datetime-local"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  className="w-full py-2 px-3 rounded-lg bg-[#141a24] border border-[#243044] text-xs font-mono text-white outline-none focus:border-[#00FF66]"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="input-edit-campaign-end-time" className="text-[10px] text-slate-400 font-mono block mb-1">
+                  End Time (Auto-Lock)
+                </label>
+                <input
+                  id="input-edit-campaign-end-time"
+                  type="datetime-local"
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  className="w-full py-2 px-3 rounded-lg bg-[#141a24] border border-[#243044] text-xs font-mono text-white outline-none focus:border-[#00FF66]"
                 />
               </div>
             </div>

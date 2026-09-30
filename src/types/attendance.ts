@@ -2,6 +2,14 @@
  * IWasHere Multi-Tenant Location-Based Attendance Types
  */
 
+export type OrganizationType =
+  | 'nysc_cds'
+  | 'church'
+  | 'school'
+  | 'company'
+  | 'event'
+  | 'other';
+
 export interface Organization {
   id: string;
   name: string;
@@ -19,6 +27,11 @@ export interface Organization {
   defaultRadius?: number;
   description?: string;
   updatedAt?: string;
+  organizationCategory?: string; // e.g. NYSC, Security, Education, Healthcare
+  organizationType?: OrganizationType | string;
+  userLabel?: string;
+  idLabel?: string;
+  sessionLabel?: string;
 }
 
 export interface UserProfile {
@@ -72,6 +85,8 @@ export interface Campaign {
   allowedRadius: number; // in meters (e.g. 50, 100, 200)
   shortCode: string; // 5 alphanumeric characters, e.g. xyz12
   timeBlocks?: TimeBlock[];
+  startTime?: string | { seconds: number; nanoseconds: number } | any; // ISO string or Firestore Timestamp
+  endTime?: string | { seconds: number; nanoseconds: number } | any; // ISO string or Firestore Timestamp
   createdAt: string;
   status?: 'active' | 'closed';
   isClosed?: boolean;
@@ -94,6 +109,7 @@ export interface Attendee {
   isOfflineSync?: boolean;
   timeBlockCode?: string;
   tampered?: boolean;
+  isOutsideWindow?: boolean;
   attendanceStatus?: 'present' | 'late' | 'flagged';
   validationNotes?: string;
 }

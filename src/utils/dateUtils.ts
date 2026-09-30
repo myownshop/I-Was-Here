@@ -149,3 +149,66 @@ export function isTimeInWindow(
   if (!startHHMM || !endHHMM) return true;
   return currentHHMM >= startHHMM && currentHHMM <= endHHMM;
 }
+
+/**
+ * Safely parses a Firestore Timestamp, object with seconds/nanoseconds, Date, number, or ISO string into a JavaScript Date.
+ */
+export function parseCampaignDate(
+  val?: string | number | Date | { seconds?: number; nanoseconds?: number; toDate?: () => Date } | null
+): Date | null {
+  if (!val) return null;
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+  if (typeof (val as any).toDate === 'function') {
+    return (val as any).toDate();
+  }
+  if (typeof (val as any).seconds === 'number') {
+    return new Date((val as any).seconds * 1000);
+  }
+  if (typeof val === 'string' || typeof val === 'number') {
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
+
+/**
+ * Converts a Date or ISO string into standard YYYY-MM-DDTHH:mm format for datetime-local inputs.
+ */
+export function toDateTimeLocalInputString(dateOrVal?: Date | string | null): string {
+  if (!dateOrVal) return '';
+  if (typeof dateOrVal === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dateOrVal)) {
+    return dateOrVal;
+  }
+  const d = dateOrVal instanceof Date ? dateOrVal : parseCampaignDate(dateOrVal);
+  if (!d || isNaN(d.getTime())) return '';
+
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  const YYYY = d.getFullYear();
+  const MM = pad(d.getMonth() + 1);
+  const DD = pad(d.getDate());
+  const HH = pad(d.getHours());
+  const mm = pad(d.getMinutes());
+  return `${YYYY}-${MM}-${DD}T${HH}:${mm}`;
+}
+
+/**
+ * Formats a duration in milliseconds into a formatted countdown string.
+ * Example: "01:20:00" or "2d 04:15:30"
+ */
+export function formatCountdownDuration(diffMs: number): string {
+  if (diffMs <= 0) return '00:00:00';
+
+  const totalSeconds = Math.floor(diffMs / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  const pad = (n: number) => n.toString().padStart(2, '0');
+
+  if (days > 0) {
+    return `${days}d ${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+  }
+  return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+}
+

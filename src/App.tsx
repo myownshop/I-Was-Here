@@ -6,13 +6,15 @@ import { AdminPortal } from './components/admin/AdminPortal';
 import { AuthPage } from './components/auth/AuthPage';
 import { ToastContainer, showToast } from './components/common/Toast';
 import { OfflineIndicator } from './components/common/OfflineIndicator';
-import { Campaign, Organization, UserProfile } from './types/attendance';
+import { Campaign, Organization, OrganizationType, UserProfile } from './types/attendance';
+import { DEFAULT_SEGMENT_ID, getSegmentById } from './config/audienceSegments';
 import { setupAutoSyncOnReconnect } from './utils/indexedDB';
 import {
   testConnection,
   subscribeToAuth,
   getUserProfile,
   getOrganization,
+  updateOrganization,
   signOutAdmin,
 } from './services/firebase';
 
@@ -23,6 +25,8 @@ export default function App() {
   const [activeCampaign, setActiveCampaign] = useState<Campaign | null>(null);
   const [targetShortCode, setTargetShortCode] = useState<string | undefined>(undefined);
   const [targetCampaignId, setTargetCampaignId] = useState<string | undefined>(undefined);
+  const [activeSegmentId, setActiveSegmentId] = useState<OrganizationType>(DEFAULT_SEGMENT_ID);
+  const [isSegmentRoute, setIsSegmentRoute] = useState<boolean>(false);
 
   // Auth & Tenant State
   const [currentOrg, setCurrentOrg] = useState<Organization | null>(null);
@@ -37,43 +41,66 @@ export default function App() {
     const pathname = window.location.pathname.replace(/^\//, '');
     const routeStr = hash || pathname;
 
-    // Check query parameters (e.g. ?view=attend or ?c=med24 or ?code=med24)
+    // Check query parameters (e.g. ?view=attend or ?c=med24 or ?code=med24 or ?for=church)
     if (typeof window !== 'undefined' && window.location.search) {
       const searchParams = new URLSearchParams(window.location.search);
       const searchCode = searchParams.get('c') || searchParams.get('code');
       const searchCampaign = searchParams.get('campaign') || searchParams.get('attend');
       const searchView = searchParams.get('view');
+      const searchFor = searchParams.get('for');
 
+      if (searchFor) {
+        setActiveSegmentId(searchFor.toLowerCase() as OrganizationType);
+        setIsSegmentRoute(true);
+        setView('home');
+        return;
+      }
       if (searchCode) {
         setTargetShortCode(searchCode);
+        setIsSegmentRoute(false);
         setView('attend');
         return;
       }
       if (searchCampaign) {
         setTargetCampaignId(searchCampaign);
+        setIsSegmentRoute(false);
         setView('attend');
         return;
       }
       if (searchView === 'attend') {
+        setIsSegmentRoute(false);
         setView('attend');
         return;
       }
       if (searchView === 'auth') {
+        setIsSegmentRoute(false);
         setView('auth');
         return;
       }
       if (searchView === 'portal' || searchView === 'admin' || searchView === 'cds') {
+        setIsSegmentRoute(false);
         setView('portal');
         return;
       }
     }
 
+    // Match segment deep link: /for/[segmentId] (e.g. #/for/church, #/for/school)
+    const segmentMatch = routeStr.match(/^for\/([a-zA-Z0-9_\-]+)/i);
+    if (segmentMatch) {
+      setActiveSegmentId(segmentMatch[1].toLowerCase() as OrganizationType);
+      setIsSegmentRoute(true);
+      setView('home');
+      return;
+    }
+
     if (routeStr.startsWith('auth') || routeStr.startsWith('login')) {
+      setIsSegmentRoute(false);
       setView('auth');
       return;
     }
 
     if (routeStr.startsWith('portal') || routeStr.startsWith('admin') || routeStr.startsWith('cds')) {
+      setIsSegmentRoute(false);
       setView('portal');
       return;
     }
@@ -82,6 +109,7 @@ export default function App() {
     const shortCodeMatch = routeStr.match(/^c\/([a-zA-Z0-9]+)/i);
     if (shortCodeMatch) {
       setTargetShortCode(shortCodeMatch[1]);
+      setIsSegmentRoute(false);
       setView('attend');
       return;
     }
@@ -90,17 +118,20 @@ export default function App() {
     const campaignMatch = routeStr.match(/^attend\/([a-zA-Z0-9_\-]+)/i);
     if (campaignMatch) {
       setTargetCampaignId(campaignMatch[1]);
+      setIsSegmentRoute(false);
       setView('attend');
       return;
     }
 
     // Direct manual attend link: /attend
     if (routeStr.startsWith('attend')) {
+      setIsSegmentRoute(false);
       setView('attend');
       return;
     }
 
     // Default view is the Home feature & capability overview
+    setIsSegmentRoute(false);
     setView('home');
   }, []);
 
@@ -159,12 +190,22 @@ export default function App() {
     };
   }, [parseRoute]);
 
-  // Dynamic page titles and meta descriptions per view
+  // Dynamic page titles and meta descriptions per view & audience segment
   useEffect(() => {
+    // Note: Hash-based segment deep linking ('#/for/[segmentId]') updates document.title and meta tags
+    // client-side for sharing and direct bookmarking. However, because this is a client-rendered SPA
+    // with no pre-rendering, these routes won't be indexed by Google the way real static pages would.
+    // This is a known architectural limitation of client-side hash routing, not something this task claims to solve.
+    const activeSegment = getSegmentById(activeSegmentId);
+
     const VIEW_METADATA: Record<AppView, { title: string; description: string }> = {
       home: {
-        title: 'IWasHere — Attendance Made Simple',
-        description: 'Track attendance the easy way — location check-in, photo verification, and real-time reports for your organization.',
+        title: isSegmentRoute
+          ? activeSegment.pageTitle
+          : 'IWasHere — Attendance Made Simple',
+        description: isSegmentRoute
+          ? activeSegment.metaDescription
+          : 'Track attendance the easy way — location check-in, photo verification, and real-time reports for your organization.',
       },
       attend: {
         title: 'Mark Attendance — IWasHere',
@@ -198,7 +239,7 @@ export default function App() {
     if (ogDescription) {
       ogDescription.setAttribute('content', currentMeta.description);
     }
-  }, [view]);
+  }, [view, activeSegmentId, isSegmentRoute]);
 
   const handleViewChange = (newView: AppView) => {
     setView(newView);
@@ -308,6 +349,7 @@ export default function App() {
           <HomePage
             organization={currentOrg}
             currentUserProfile={currentUserProfile}
+            initialSegmentId={activeSegmentId}
             onNavigateToAuth={() => handleViewChange('auth')}
             onNavigateToPortal={() => handleViewChange('portal')}
             onNavigateToAttend={handleLaunchAttendeeFlowWithCode}

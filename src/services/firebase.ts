@@ -22,6 +22,7 @@ import {
   query,
   where,
   getDocFromServer,
+  Timestamp,
 } from 'firebase/firestore';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import {
@@ -36,6 +37,7 @@ import {
   CampaignWithOrg,
 } from '../types/attendance';
 import { calculateHaversineDistance } from '../utils/geo';
+import { parseCampaignDate } from '../utils/dateUtils';
 
 // Initialize Firebase App from environment variables with safe defaults for local/preview modes
 const envApiKey = import.meta.env.VITE_FIREBASE_API_KEY;
@@ -312,7 +314,8 @@ export async function createOrganization(
   adminUid: string,
   adminEmail: string,
   adminName: string,
-  accentColor = '#00FF66'
+  accentColor = '#00FF66',
+  extraOrgFields?: Partial<Organization>
 ): Promise<Organization> {
   const orgId = `org_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
   const createdAt = new Date().toISOString();
@@ -325,6 +328,7 @@ export async function createOrganization(
     adminName: adminName.trim(),
     accentColor: accentColor || '#00FF66',
     createdAt,
+    ...extraOrgFields,
   };
 
   try {
@@ -512,12 +516,13 @@ export async function signUpAdmin(
   email: string,
   password: string,
   orgName: string,
-  accentColor = '#00FF66'
+  accentColor = '#00FF66',
+  extraOrgFields?: Partial<Organization>
 ): Promise<{ user: User; org: Organization; profile: UserProfile }> {
   const cred = await createUserWithEmailAndPassword(auth, email, password);
   await updateProfile(cred.user, { displayName: adminName });
 
-  const org = await createOrganization(orgName, cred.user.uid, email, adminName, accentColor);
+  const org = await createOrganization(orgName, cred.user.uid, email, adminName, accentColor, extraOrgFields);
 
   const profile: UserProfile = {
     uid: cred.user.uid,
@@ -718,6 +723,8 @@ export async function createCampaign(
     createdAt,
     status: 'active',
     isClosed: false,
+    startTime: campaignData.startTime || undefined,
+    endTime: campaignData.endTime || undefined,
   };
 
   const shortLinkData: ShortLink = {
@@ -727,8 +734,14 @@ export async function createCampaign(
     createdAt,
   };
 
+  // Convert dates to standard Firebase Timestamps
+  const startDate = parseCampaignDate(fullCampaign.startTime);
+  const endDate = parseCampaignDate(fullCampaign.endTime);
+  const startTimestamp = startDate ? Timestamp.fromDate(startDate) : null;
+  const endTimestamp = endDate ? Timestamp.fromDate(endDate) : null;
+
   try {
-    await setDoc(doc(db, 'campaigns', campaignId), {
+    const campaignPayload: Record<string, unknown> = {
       name: fullCampaign.name,
       orgId: fullCampaign.orgId,
       date: fullCampaign.date,
@@ -740,7 +753,11 @@ export async function createCampaign(
       createdAt: fullCampaign.createdAt,
       status: 'active',
       isClosed: false,
-    });
+    };
+    if (startTimestamp) campaignPayload.startTime = startTimestamp;
+    if (endTimestamp) campaignPayload.endTime = endTimestamp;
+
+    await setDoc(doc(db, 'campaigns', campaignId), campaignPayload);
 
     await setDoc(doc(db, 'short_links', shortLinkData.shortCode), {
       shortCode: shortLinkData.shortCode,
@@ -771,6 +788,27 @@ export async function updateCampaign(
   const cachedCampaigns = getLocalCache<Campaign>(LOCAL_CAMPAIGNS_KEY, []);
   const existing = cachedCampaigns.find((c) => c.id === campaignId);
 
+  // Compute resolved startTime & endTime as ISO strings for clean JSON serialization
+  let resolvedStartTime = existing?.startTime;
+  if (updates.startTime !== undefined) {
+    if (updates.startTime) {
+      const sDate = parseCampaignDate(updates.startTime);
+      resolvedStartTime = sDate ? sDate.toISOString() : undefined;
+    } else {
+      resolvedStartTime = undefined;
+    }
+  }
+
+  let resolvedEndTime = existing?.endTime;
+  if (updates.endTime !== undefined) {
+    if (updates.endTime) {
+      const eDate = parseCampaignDate(updates.endTime);
+      resolvedEndTime = eDate ? eDate.toISOString() : undefined;
+    } else {
+      resolvedEndTime = undefined;
+    }
+  }
+
   const updatedCampaign: Campaign = {
     id: campaignId,
     orgId: updates.orgId ?? existing?.orgId ?? '',
@@ -781,6 +819,8 @@ export async function updateCampaign(
     allowedRadius: updates.allowedRadius ?? existing?.allowedRadius ?? 100,
     shortCode: (updates.shortCode ?? existing?.shortCode ?? '').toLowerCase().trim(),
     timeBlocks: updates.timeBlocks ?? existing?.timeBlocks ?? [],
+    startTime: resolvedStartTime,
+    endTime: resolvedEndTime,
     createdAt: existing?.createdAt ?? new Date().toISOString(),
     status: updates.status ?? existing?.status ?? 'active',
     isClosed: updates.isClosed !== undefined ? updates.isClosed : (existing?.isClosed ?? false),
@@ -789,24 +829,31 @@ export async function updateCampaign(
 
   try {
     const campaignRef = doc(db, 'campaigns', campaignId);
-    await setDoc(
-      campaignRef,
-      {
-        name: updatedCampaign.name,
-        orgId: updatedCampaign.orgId,
-        date: updatedCampaign.date,
-        targetLatitude: Number(updatedCampaign.targetLatitude),
-        targetLongitude: Number(updatedCampaign.targetLongitude),
-        allowedRadius: Number(updatedCampaign.allowedRadius),
-        shortCode: updatedCampaign.shortCode,
-        timeBlocks: updatedCampaign.timeBlocks || [],
-        status: updatedCampaign.status,
-        isClosed: updatedCampaign.isClosed,
-        closedAt: updatedCampaign.closedAt || null,
-        updatedAt: new Date().toISOString(),
-      },
-      { merge: true }
-    );
+    const updatePayload: Record<string, unknown> = {
+      name: updatedCampaign.name,
+      orgId: updatedCampaign.orgId,
+      date: updatedCampaign.date,
+      targetLatitude: Number(updatedCampaign.targetLatitude),
+      targetLongitude: Number(updatedCampaign.targetLongitude),
+      allowedRadius: Number(updatedCampaign.allowedRadius),
+      shortCode: updatedCampaign.shortCode,
+      timeBlocks: updatedCampaign.timeBlocks || [],
+      status: updatedCampaign.status,
+      isClosed: updatedCampaign.isClosed,
+      closedAt: updatedCampaign.closedAt || null,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (updates.startTime !== undefined) {
+      const sDate = updates.startTime ? parseCampaignDate(updates.startTime) : null;
+      updatePayload.startTime = sDate ? Timestamp.fromDate(sDate) : null;
+    }
+    if (updates.endTime !== undefined) {
+      const eDate = updates.endTime ? parseCampaignDate(updates.endTime) : null;
+      updatePayload.endTime = eDate ? Timestamp.fromDate(eDate) : null;
+    }
+
+    await setDoc(campaignRef, updatePayload, { merge: true });
 
     if (updatedCampaign.shortCode) {
       await setDoc(
@@ -964,6 +1011,33 @@ export async function reopenCampaign(campaignId: string): Promise<Campaign> {
   };
 }
 
+/**
+ * Parses a raw Firestore document snapshot data into a strictly typed Campaign
+ * with startTime and endTime serialized as standard ISO strings.
+ */
+export function parseCampaignDoc(id: string, data: Record<string, any>): Campaign {
+  const startD = parseCampaignDate(data.startTime);
+  const endD = parseCampaignDate(data.endTime);
+
+  return {
+    id,
+    orgId: data.orgId || '',
+    name: data.name || '',
+    date: data.date || '',
+    targetLatitude: Number(data.targetLatitude) || 0,
+    targetLongitude: Number(data.targetLongitude) || 0,
+    allowedRadius: Number(data.allowedRadius) || 100,
+    shortCode: (data.shortCode || '').toLowerCase().trim(),
+    timeBlocks: data.timeBlocks || [],
+    startTime: startD ? startD.toISOString() : undefined,
+    endTime: endD ? endD.toISOString() : undefined,
+    createdAt: data.createdAt || new Date().toISOString(),
+    status: data.status || (data.isClosed ? 'closed' : 'active'),
+    isClosed: Boolean(data.isClosed || data.status === 'closed'),
+    closedAt: data.closedAt || undefined,
+  };
+}
+
 export async function getCampaignById(campaignId: string): Promise<Campaign | null> {
   // 1. Fast local cache lookup (0ms)
   const cached = getLocalCache<Campaign>(LOCAL_CAMPAIGNS_KEY, []);
@@ -973,22 +1047,7 @@ export async function getCampaignById(campaignId: string): Promise<Campaign | nu
     withTimeout(getDoc(doc(db, 'campaigns', campaignId)), 2000)
       .then((snap) => {
         if (snap && snap.exists()) {
-          const data = snap.data();
-          const refreshed: Campaign = {
-            id: snap.id,
-            orgId: data.orgId || '',
-            name: data.name,
-            date: data.date,
-            targetLatitude: Number(data.targetLatitude),
-            targetLongitude: Number(data.targetLongitude),
-            allowedRadius: Number(data.allowedRadius),
-            shortCode: data.shortCode,
-            timeBlocks: data.timeBlocks || [],
-            createdAt: data.createdAt,
-            status: data.status || (data.isClosed ? 'closed' : 'active'),
-            isClosed: Boolean(data.isClosed || data.status === 'closed'),
-            closedAt: data.closedAt || undefined,
-          };
+          const refreshed = parseCampaignDoc(snap.id, snap.data());
           setLocalCache(LOCAL_CAMPAIGNS_KEY, [
             refreshed,
             ...cached.filter((c) => c.id !== campaignId),
@@ -1003,22 +1062,7 @@ export async function getCampaignById(campaignId: string): Promise<Campaign | nu
   try {
     const snap = await withTimeout(getDoc(doc(db, 'campaigns', campaignId)), 2500);
     if (snap.exists()) {
-      const data = snap.data();
-      const campaign: Campaign = {
-        id: snap.id,
-        orgId: data.orgId || '',
-        name: data.name,
-        date: data.date,
-        targetLatitude: Number(data.targetLatitude),
-        targetLongitude: Number(data.targetLongitude),
-        allowedRadius: Number(data.allowedRadius),
-        shortCode: data.shortCode,
-        timeBlocks: data.timeBlocks || [],
-        createdAt: data.createdAt,
-        status: data.status || (data.isClosed ? 'closed' : 'active'),
-        isClosed: Boolean(data.isClosed || data.status === 'closed'),
-        closedAt: data.closedAt || undefined,
-      };
+      const campaign = parseCampaignDoc(snap.id, snap.data());
       setLocalCache(LOCAL_CAMPAIGNS_KEY, [campaign, ...cached]);
       return campaign;
     }
@@ -1067,22 +1111,7 @@ export async function resolveShortCode(rawCode: string): Promise<Campaign | null
     const snap = await withTimeout(getDocs(q), 2500);
     if (!snap.empty) {
       const docSnap = snap.docs[0];
-      const data = docSnap.data();
-      const campaign: Campaign = {
-        id: docSnap.id,
-        orgId: data.orgId || '',
-        name: data.name,
-        date: data.date,
-        targetLatitude: Number(data.targetLatitude),
-        targetLongitude: Number(data.targetLongitude),
-        allowedRadius: Number(data.allowedRadius),
-        shortCode: data.shortCode,
-        timeBlocks: data.timeBlocks || [],
-        createdAt: data.createdAt,
-        status: data.status || (data.isClosed ? 'closed' : 'active'),
-        isClosed: Boolean(data.isClosed || data.status === 'closed'),
-        closedAt: data.closedAt || undefined,
-      };
+      const campaign = parseCampaignDoc(docSnap.id, docSnap.data());
       setLocalCache(LOCAL_CAMPAIGNS_KEY, [campaign, ...cachedCampaigns]);
       return campaign;
     }
@@ -1099,22 +1128,7 @@ export async function getCampaignsForOrg(orgId: string): Promise<Campaign[]> {
     const snapshot = await getDocs(q);
     const firestoreCampaigns: Campaign[] = [];
     snapshot.forEach((docSnap) => {
-      const data = docSnap.data();
-      firestoreCampaigns.push({
-        id: docSnap.id,
-        orgId: data.orgId || orgId,
-        name: data.name,
-        date: data.date,
-        targetLatitude: Number(data.targetLatitude),
-        targetLongitude: Number(data.targetLongitude),
-        allowedRadius: Number(data.allowedRadius),
-        shortCode: data.shortCode,
-        timeBlocks: data.timeBlocks || [],
-        createdAt: data.createdAt,
-        status: data.status || (data.isClosed ? 'closed' : 'active'),
-        isClosed: Boolean(data.isClosed || data.status === 'closed'),
-        closedAt: data.closedAt || undefined,
-      });
+      firestoreCampaigns.push(parseCampaignDoc(docSnap.id, docSnap.data()));
     });
 
     const sorted = firestoreCampaigns.sort(
@@ -1134,22 +1148,7 @@ export async function getAllCampaigns(): Promise<Campaign[]> {
     const snapshot = await getDocs(collection(db, 'campaigns'));
     const list: Campaign[] = [];
     snapshot.forEach((docSnap) => {
-      const data = docSnap.data();
-      list.push({
-        id: docSnap.id,
-        orgId: data.orgId || '',
-        name: data.name,
-        date: data.date,
-        targetLatitude: Number(data.targetLatitude),
-        targetLongitude: Number(data.targetLongitude),
-        allowedRadius: Number(data.allowedRadius),
-        shortCode: data.shortCode,
-        timeBlocks: data.timeBlocks || [],
-        createdAt: data.createdAt,
-        status: data.status || (data.isClosed ? 'closed' : 'active'),
-        isClosed: Boolean(data.isClosed || data.status === 'closed'),
-        closedAt: data.closedAt || undefined,
-      });
+      list.push(parseCampaignDoc(docSnap.id, docSnap.data()));
     });
 
     const sorted = list.sort(
@@ -1439,7 +1438,15 @@ export async function getCampaignAttendees(campaignId: string): Promise<Attendee
 export async function importOfflineIwhRecord(
   record: OfflineAttendanceRecord,
   campaign: Campaign
-): Promise<{ success: boolean; attendee: Attendee; distanceMeters: number; message: string; isTampered: boolean; isLate: boolean }> {
+): Promise<{
+  success: boolean;
+  attendee: Attendee;
+  distanceMeters: number;
+  message: string;
+  isTampered: boolean;
+  isLate: boolean;
+  isOutsideWindow?: boolean;
+}> {
   // 1. Recalculate distance using ground-truth campaign coordinates
   const verifiedDistance = calculateHaversineDistance(
     record.latitude,
@@ -1455,17 +1462,37 @@ export async function importOfflineIwhRecord(
     );
   }
 
-  // 2. Check duplicate
+  // 2. Scheduled Time Window Validation (Offline Security Enforcement)
+  const recordDate = new Date(record.timestamp);
+  const recordMillis = recordDate.getTime();
+  const startDate = parseCampaignDate(campaign.startTime);
+  const endDate = parseCampaignDate(campaign.endTime);
+  const startMillis = startDate ? startDate.getTime() : null;
+  const endMillis = endDate ? endDate.getTime() : null;
+
+  let isOutsideWindow = false;
+  if (startMillis && recordMillis < startMillis) {
+    isOutsideWindow = true;
+  }
+  if (endMillis && recordMillis > endMillis) {
+    isOutsideWindow = true;
+  }
+
+  // 3. Check duplicate
   const dateStr = record.timestamp.split('T')[0];
   const isDuplicate = await checkStateCodeRegisteredToday(campaign.id, record.stateCode, dateStr);
   if (isDuplicate) {
     throw new Error(`Duplicate entry: ${record.stateCode} already registered attendance for this date.`);
   }
 
-  // 3. Anti-Tampering Validation
+  // 4. Anti-Tampering Validation
   const isTampered = Boolean(record.tampered);
-  let attendanceStatus: 'present' | 'late' | 'flagged' = isTampered ? 'flagged' : 'present';
+  let attendanceStatus: 'present' | 'late' | 'flagged' = isTampered || isOutsideWindow ? 'flagged' : 'present';
   const notesList: string[] = [];
+
+  if (isOutsideWindow) {
+    notesList.push('Rejected: Outside Allowed Window');
+  }
 
   if (isTampered) {
     notesList.push('Clock Manipulated: System clock mismatch detected by hardware anti-tampering engine.');
@@ -1560,6 +1587,7 @@ export async function importOfflineIwhRecord(
       isOfflineSync: true,
       timeBlockCode: importedAttendee.timeBlockCode || null,
       tampered: isTampered,
+      isOutsideWindow: isOutsideWindow || false,
       attendanceStatus,
       validationNotes: validationNotes || null,
       importedAt: new Date().toISOString(),
@@ -1572,7 +1600,9 @@ export async function importOfflineIwhRecord(
   setLocalCache(LOCAL_ATTENDEES_KEY, [importedAttendee, ...cached]);
 
   let statusMsg = `Verified and imported ${importedAttendee.stateCode}`;
-  if (isTampered) {
+  if (isOutsideWindow) {
+    statusMsg = `Rejected: Outside Allowed Window (${importedAttendee.stateCode})`;
+  } else if (isTampered) {
     statusMsg += ` [⚠️ CLOCK MANIPULATED]`;
   } else if (isLate) {
     statusMsg += ` [⏱️ LATE]`;
@@ -1581,12 +1611,13 @@ export async function importOfflineIwhRecord(
   }
 
   return {
-    success: true,
+    success: !isOutsideWindow,
     attendee: importedAttendee,
     distanceMeters: Math.round(verifiedDistance),
     message: statusMsg,
     isTampered,
     isLate,
+    isOutsideWindow,
   };
 }
 

@@ -27,6 +27,7 @@ import { FloatingInput } from '../common/FloatingInput';
 import { CameraViewfinder } from './CameraViewfinder';
 import { GeofenceStatus } from './GeofenceStatus';
 import { AttendanceSuccessModal } from './AttendanceSuccessModal';
+import { SessionTimer, useSessionTimer } from './SessionTimer';
 import { showToast } from '../common/Toast';
 import { CompressionResult } from '../../utils/imageCompression';
 import { formatStateCodeInput, isValidStateCode, getClientIpAddress } from '../../utils/nysc';
@@ -63,6 +64,9 @@ export function AttendanceForm({
     Boolean(initialCampaignId || initialShortCode)
   );
   const [campaignError, setCampaignError] = useState<string | null>(null);
+
+  // Live countdown and automated scheduling engine hook
+  const sessionTimer = useSessionTimer(campaign);
 
   // Manual Short code fallback input
   const [shortCodeInput, setShortCodeInput] = useState<string>(initialShortCode || '');
@@ -253,6 +257,18 @@ export function AttendanceForm({
 
     if (!campaign) {
       showToast('error', 'No active attendance campaign loaded.', 'Error');
+      return;
+    }
+
+    // Scheduling check
+    if (sessionTimer.state !== 'active') {
+      showToast(
+        'error',
+        sessionTimer.state === 'upcoming'
+          ? 'Roll call has not unlocked yet. Please wait for the countdown to complete.'
+          : 'This attendance session has ended and is now closed.',
+        'Session Not Active'
+      );
       return;
     }
 
@@ -761,35 +777,27 @@ export function AttendanceForm({
           <div className="h-40 bg-slate-800/40 rounded-xl animate-pulse" />
         </div>
       ) : campaign ? (
-        campaign.status === 'closed' || campaign.isClosed ? (
-          <div className="bg-[#0e131d] border border-rose-500/30 rounded-3xl p-6 sm:p-8 text-center space-y-4 shadow-xl">
-            <div className="w-14 h-14 rounded-2xl bg-rose-500/15 border border-rose-500/40 flex items-center justify-center text-rose-400 mx-auto shadow-inner">
-              <Lock className="w-7 h-7" />
-            </div>
-            <div className="space-y-1.5">
-              <span className="text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full bg-rose-950 text-rose-300 border border-rose-800 uppercase">
-                SESSION CONCLUDED
-              </span>
-              <h3 className="text-xl font-bold text-white pt-1">{campaign.name}</h3>
-              <p className="text-xs text-slate-400 max-w-sm mx-auto leading-relaxed">
-                This attendance session has been ended and closed by the CDS Coordinator. New attendance submissions are no longer accepted for this roll call.
-              </p>
-            </div>
-            {onBackToHome && (
-              <div className="pt-3">
-                <button
-                  type="button"
-                  onClick={onBackToHome}
-                  className="px-6 py-2.5 rounded-xl font-bold text-xs text-slate-200 bg-[#161e2b] hover:bg-[#202a3a] border border-[#273449] transition-all cursor-pointer inline-flex items-center space-x-2"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                  <span>Return to Home</span>
-                </button>
-              </div>
-            )}
-          </div>
+        sessionTimer.state === 'upcoming' ? (
+          <SessionTimer
+            campaign={campaign}
+            organization={organization}
+            onBackToHome={onBackToHome}
+            variant="full"
+          />
+        ) : sessionTimer.state === 'expired' ? (
+          <SessionTimer
+            campaign={campaign}
+            organization={organization}
+            onBackToHome={onBackToHome}
+            variant="full"
+          />
         ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Active Schedule Session Indicator */}
+          <div className="flex items-center justify-between">
+            <SessionTimer campaign={campaign} variant="active-indicator" />
+          </div>
+
           {/* Prominent Dynamic Organization & Campaign Header Card */}
           <div
             id="active-campaign-banner"

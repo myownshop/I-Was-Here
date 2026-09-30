@@ -50,6 +50,9 @@ export function OrganizationSettings({
 }: OrganizationSettingsProps) {
   // Form state
   const [name, setName] = useState(organization.name || '');
+  const [organizationCategory, setOrganizationCategory] = useState(
+    organization.organizationCategory || organization.organizationType || ''
+  );
   const [adminName, setAdminName] = useState(organization.adminName || '');
   const [adminEmail, setAdminEmail] = useState(organization.adminEmail || '');
   const [stateLga, setStateLga] = useState(organization.stateLga || '');
@@ -139,6 +142,7 @@ export function OrganizationSettings({
 
       const updates: Partial<Organization> = {
         name: name.trim(),
+        organizationCategory: organizationCategory.trim(),
         adminName: adminName.trim(),
         adminEmail: adminEmail.trim(),
         accentColor: accentColor || '#00FF66',
@@ -306,12 +310,12 @@ export function OrganizationSettings({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-1.5 md:col-span-2">
+            <div className="space-y-1.5">
               <label
                 htmlFor="input-org-name"
                 className="text-xs font-bold text-slate-300 block flex items-center justify-between"
               >
-                <span>Organization / CDS Name *</span>
+                <span>Organization Name *</span>
                 <span className="text-[10px] text-slate-500">e.g. Digital Literacy CDS</span>
               </label>
               <div className="relative">
@@ -323,6 +327,27 @@ export function OrganizationSettings({
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="e.g. Digital Literacy CDS, Ikeja"
+                  className="w-full bg-[#090c12] border border-[#212c3e] rounded-xl pl-9 pr-3.5 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-[#00FF66] transition-colors"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label
+                htmlFor="input-org-category"
+                className="text-xs font-bold text-slate-300 block flex items-center justify-between"
+              >
+                <span>Organization Category</span>
+                <span className="text-[10px] text-slate-500">Data Pool Preset</span>
+              </label>
+              <div className="relative">
+                <Sparkles className="w-4 h-4 absolute left-3 top-3 text-slate-500" />
+                <input
+                  id="input-org-category"
+                  type="text"
+                  value={organizationCategory}
+                  onChange={(e) => setOrganizationCategory(e.target.value)}
+                  placeholder="e.g. NYSC, Security, Education..."
                   className="w-full bg-[#090c12] border border-[#212c3e] rounded-xl pl-9 pr-3.5 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-[#00FF66] transition-colors"
                 />
               </div>

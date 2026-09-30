@@ -62,7 +62,7 @@ export default defineConfig(() => {
       },
     },
     server: {
-      // HMR and WebSocket server are disabled in AI Studio iframe environment
+      // HMR is conditionally disabled via DISABLE_HMR
       hmr: false as const,
       ws: false as const,
       watch: process.env.DISABLE_HMR === 'true' ? null : {},

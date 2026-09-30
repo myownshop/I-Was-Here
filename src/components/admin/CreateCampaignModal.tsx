@@ -41,6 +41,10 @@ export function CreateCampaignModal({
   const [allowedRadius, setAllowedRadius] = useState<number>(organization?.defaultRadius || 100);
   const [shortCode, setShortCode] = useState<string>(generateShortCode());
 
+  // Automated scheduling: standard datetime-local inputs
+  const [startTime, setStartTime] = useState<string>(`${today}T08:00`);
+  const [endTime, setEndTime] = useState<string>(`${today}T12:00`);
+
   // Time-Blocks for roll-call windows and anti-tamper checking
   const [timeBlocks, setTimeBlocks] = useState<TimeBlock[]>([
     { id: 'tb_1', code: 'X12', startTime: '08:00', endTime: '08:30', label: 'Early Window' },
@@ -126,6 +130,19 @@ export function CreateCampaignModal({
       return;
     }
 
+    if (startTime && endTime) {
+      const sDate = new Date(startTime);
+      const eDate = new Date(endTime);
+      if (isNaN(sDate.getTime()) || isNaN(eDate.getTime())) {
+        showToast('error', 'Please provide valid start and end times.', 'Invalid Times');
+        return;
+      }
+      if (sDate >= eDate) {
+        showToast('error', 'Session End Time must be later than Start Time.', 'Schedule Invalid');
+        return;
+      }
+    }
+
     setSaving(true);
     try {
       const created = await createCampaign({
@@ -137,6 +154,8 @@ export function CreateCampaignModal({
         allowedRadius: Number(allowedRadius),
         shortCode: shortCode.toLowerCase().trim(),
         timeBlocks: timeBlocks.length > 0 ? timeBlocks : undefined,
+        startTime: startTime ? startTime : undefined,
+        endTime: endTime ? endTime : undefined,
       });
 
       showToast('success', `Created session: ${created.name} (${created.shortCode})`, 'Campaign Live');
@@ -202,6 +221,52 @@ export function CreateCampaignModal({
                 className="w-full bg-transparent text-sm text-white font-medium outline-none"
                 required
               />
+            </div>
+          </div>
+
+          {/* Automated Schedule Window Section */}
+          <div className="bg-[#0a0d14] rounded-xl p-3.5 border border-[#1e2738] space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-[#00FF66]" />
+                <span>Automated Schedule Window</span>
+              </span>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#00FF66]/10 text-[#00FF66] border border-[#00FF66]/20">
+                Auto-Lock & Countdown
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Set the start and end time. The system displays a glowing countdown before opening and automatically locks when the session closes.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="input-campaign-start-time" className="text-[10px] text-slate-400 font-mono block mb-1">
+                  Start Time (Unlock)
+                </label>
+                <input
+                  id="input-campaign-start-time"
+                  type="datetime-local"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  className="w-full py-2 px-3 rounded-lg bg-[#121721] border border-[#232d3d] text-xs font-mono text-white outline-none focus:border-[#00FF66]"
+                  required
+                />
+              </div>
+
+              <div>
+                <label htmlFor="input-campaign-end-time" className="text-[10px] text-slate-400 font-mono block mb-1">
+                  End Time (Auto-Lock)
+                </label>
+                <input
+                  id="input-campaign-end-time"
+                  type="datetime-local"
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  className="w-full py-2 px-3 rounded-lg bg-[#121721] border border-[#232d3d] text-xs font-mono text-white outline-none focus:border-[#00FF66]"
+                  required
+                />
+              </div>
             </div>
           </div>
 
