@@ -106,7 +106,7 @@ export default function App() {
     }
 
     // Match short code alias: /c/[short_code]
-    const shortCodeMatch = routeStr.match(/^c\/([a-zA-Z0-9]+)/i);
+    const shortCodeMatch = routeStr.match(/^c\/([a-zA-Z0-9_\-]+)/i);
     if (shortCodeMatch) {
       setTargetShortCode(shortCodeMatch[1]);
       setIsSegmentRoute(false);

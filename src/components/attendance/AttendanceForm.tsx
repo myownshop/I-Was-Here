@@ -15,6 +15,9 @@ import {
   Zap,
   Sparkles,
   Radio,
+  ChevronDown,
+  Clock,
+  QrCode,
 } from 'lucide-react';
 import {
   Campaign,
@@ -28,6 +31,8 @@ import { CameraViewfinder } from './CameraViewfinder';
 import { GeofenceStatus } from './GeofenceStatus';
 import { AttendanceSuccessModal } from './AttendanceSuccessModal';
 import { SessionTimer, useSessionTimer } from './SessionTimer';
+import { QRScannerModal } from './QRScannerModal';
+import { ParsedQRResult } from '../../utils/qrParser';
 import { showToast } from '../common/Toast';
 import { CompressionResult } from '../../utils/imageCompression';
 import { formatStateCodeInput, isValidStateCode, getClientIpAddress } from '../../utils/nysc';
@@ -42,6 +47,7 @@ import {
   checkStateCodeRegisteredToday,
   submitAttendance,
   getOrganization,
+  getAllCampaigns,
 } from '../../services/firebase';
 
 interface AttendanceFormProps {
@@ -76,8 +82,39 @@ export function AttendanceForm({
   const [name, setName] = useState<string>('');
   const [stateCode, setStateCode] = useState<string>('');
   const [timeBlockCode, setTimeBlockCode] = useState<string>('');
+  const [isFocusedTimeBlock, setIsFocusedTimeBlock] = useState<boolean>(false);
   const [nameError, setNameError] = useState<string>('');
   const [stateCodeError, setStateCodeError] = useState<string>('');
+
+  // Time Block Helpers & Active Window Detection
+  const availableTimeBlocks = campaign?.timeBlocks && campaign.timeBlocks.length > 0 ? campaign.timeBlocks : [];
+  const selectedBlock = availableTimeBlocks.find(
+    (b) => b.code.toUpperCase() === timeBlockCode.trim().toUpperCase()
+  );
+  const isBlockActive = useCallback(
+    (b: { startTime: string; endTime: string }) => {
+      const now = getCurrentWATTimeHHMM();
+      return now >= b.startTime && now <= b.endTime;
+    },
+    []
+  );
+
+  // Auto-select single or currently active time block when campaign loads
+  useEffect(() => {
+    if (campaign?.timeBlocks && campaign.timeBlocks.length > 0) {
+      if (campaign.timeBlocks.length === 1) {
+        setTimeBlockCode(campaign.timeBlocks[0].code);
+      } else {
+        const now = getCurrentWATTimeHHMM();
+        const activeBlock = campaign.timeBlocks.find(
+          (b) => now >= b.startTime && now <= b.endTime
+        );
+        if (activeBlock) {
+          setTimeBlockCode(activeBlock.code);
+        }
+      }
+    }
+  }, [campaign]);
 
   // Geolocation & Geofence
   const [currentCoords, setCurrentCoords] = useState<GeoLocationCoordinates | null>(null);
@@ -99,6 +136,7 @@ export function AttendanceForm({
   const [completedAttendee, setCompletedAttendee] = useState<Attendee | null>(null);
   const [isOfflinePackage, setIsOfflinePackage] = useState<boolean>(false);
   const [offlineFilename, setOfflineFilename] = useState<string>('');
+  const [isQRScannerOpen, setIsQRScannerOpen] = useState<boolean>(false);
 
   // 15-second submission progress timer
   useEffect(() => {
@@ -130,10 +168,40 @@ export function AttendanceForm({
     let isCancelled = false;
 
     async function loadCampaign() {
+      // If neither shortCode nor campaignId is specified in URL, automatically load the active or latest roll call
+      // session so clicking on the link goes straight to the attendance form rather than the load session screen.
       if (!initialShortCode && !initialCampaignId) {
-        setCampaign(null);
-        setCampaignLoading(false);
+        setCampaignLoading(true);
         setCampaignError(null);
+
+        try {
+          const all = await getAllCampaigns();
+          const active = all.find((c) => c.status === 'active' || (!c.status && !c.isClosed));
+          const candidate = active || all[0];
+
+          if (candidate && !isCancelled) {
+            setCampaign(candidate);
+            onCampaignLoadedRef.current?.(candidate);
+
+            if (candidate.orgId) {
+              getOrganization(candidate.orgId)
+                .then((org) => {
+                  if (org && !isCancelled) setOrganization(org);
+                })
+                .catch(() => {});
+            }
+            setCampaignLoading(false);
+            return;
+          }
+        } catch (err) {
+          console.warn('Auto-resolving active session error:', err);
+        }
+
+        if (!isCancelled) {
+          setCampaign(null);
+          setCampaignLoading(false);
+          setCampaignError(null);
+        }
         return;
       }
 
@@ -184,6 +252,41 @@ export function AttendanceForm({
       isCancelled = true;
     };
   }, [initialCampaignId, initialShortCode]);
+
+  // Handle scanned QR code result
+  const handleCodeDetected = async (result: ParsedQRResult) => {
+    setIsQRScannerOpen(false);
+    setCampaignLoading(true);
+    setCampaignError(null);
+
+    try {
+      let found: Campaign | null = null;
+      if (result.type === 'campaignId') {
+        found = await getCampaignById(result.code);
+      } else {
+        found = await resolveShortCode(result.code);
+      }
+
+      if (found) {
+        setCampaign(found);
+        onCampaignLoadedRef.current?.(found);
+        if (found.orgId) {
+          const org = await getOrganization(found.orgId);
+          if (org) setOrganization(org);
+        }
+        showToast('success', `Joined roll call: ${found.name}`, 'QR Scanned');
+        window.location.hash = `#/c/${found.shortCode}`;
+      } else {
+        setCampaignError(`No roll call session found matching scanned QR code "${result.code}".`);
+        showToast('error', `Session code "${result.code}" was not found.`, 'QR Not Found');
+      }
+    } catch (err) {
+      console.error('QR code resolve error:', err);
+      setCampaignError('Network error while looking up scanned QR code.');
+    } finally {
+      setCampaignLoading(false);
+    }
+  };
 
   // Handle manual short code lookup
   const handleResolveManualShortCode = async (e: React.FormEvent) => {
@@ -856,11 +959,22 @@ export function AttendanceForm({
                 <h2 className="text-sm font-extrabold text-white truncate">{campaign.name}</h2>
               </div>
 
-              <div className="text-right shrink-0">
-                <span className="text-[10px] text-slate-400 block">Radius</span>
-                <span className="text-xs font-mono font-bold" style={{ color: accentColor }}>
-                  {campaign.allowedRadius}m Max
-                </span>
+              <div className="text-right shrink-0 flex flex-col items-end gap-1">
+                <div>
+                  <span className="text-[10px] text-slate-400 block">Radius</span>
+                  <span className="text-xs font-mono font-bold" style={{ color: accentColor }}>
+                    {campaign.allowedRadius}m Max
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsQRScannerOpen(true)}
+                  className="px-2 py-0.5 rounded-lg bg-[#182333] hover:bg-[#202e44] text-slate-200 border border-[#27384f] text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                  title="Scan another session QR code"
+                >
+                  <QrCode className="w-3 h-3 text-[#00FF66]" />
+                  <span>Scan QR</span>
+                </button>
               </div>
             </div>
           </div>
@@ -902,21 +1016,99 @@ export function AttendanceForm({
               autoComplete="name"
             />
 
-            {/* Time-Block Code Input */}
-            <FloatingInput
-              id="input-time-block-code"
-              label="Time-Block Code"
-              value={timeBlockCode}
-              onChange={(e) => setTimeBlockCode(e.target.value.toUpperCase())}
-              hint={
-                campaign.timeBlocks && campaign.timeBlocks.length > 0
-                  ? `Active Windows (WAT): ${campaign.timeBlocks.map((b) => `${b.code} (${b.startTime}-${b.endTime})`).join(', ')}`
-                  : 'Assigned session code (e.g. X12)'
-              }
-              isMono
-              maxLength={6}
-              autoComplete="off"
-            />
+            {/* Time-Block Selection (Dropdown Menu of Available Blocks provided by Admin) */}
+            {availableTimeBlocks.length > 0 ? (
+              <div className="relative w-full mb-3">
+                <div
+                  className={`relative w-full rounded-xl border transition-all duration-200 bg-[#0e1219] ${
+                    isFocusedTimeBlock
+                      ? 'border-[#00FF66] shadow-[0_0_15px_rgba(0,255,102,0.2)]'
+                      : timeBlockCode
+                      ? 'border-[#2d3748]'
+                      : 'border-[#222a38] hover:border-slate-700'
+                  }`}
+                  style={{
+                    borderColor: isFocusedTimeBlock ? accentColor : timeBlockCode ? `${accentColor}99` : undefined,
+                  }}
+                >
+                  <label
+                    htmlFor="select-time-block"
+                    className="absolute left-4 top-2 text-[10px] font-bold tracking-wider uppercase text-slate-400 pointer-events-none flex items-center gap-1.5"
+                  >
+                    <Clock className="w-3 h-3 text-slate-400" />
+                    <span>Time Block</span>
+                  </label>
+                  <select
+                    id="select-time-block"
+                    value={timeBlockCode}
+                    onChange={(e) => setTimeBlockCode(e.target.value)}
+                    onFocus={() => setIsFocusedTimeBlock(true)}
+                    onBlur={() => setIsFocusedTimeBlock(false)}
+                    className="w-full pt-6 pb-2.5 px-4 text-sm text-[#f0f3f6] bg-transparent outline-none cursor-pointer appearance-none pr-10 font-mono font-semibold"
+                  >
+                    <option value="" className="bg-[#0e1219] text-slate-400 font-sans">
+                      -- Select Available Time Block --
+                    </option>
+                    {availableTimeBlocks.map((block) => {
+                      const active = isBlockActive(block);
+                      return (
+                        <option
+                          key={block.code}
+                          value={block.code}
+                          className="bg-[#0e1219] text-white py-1.5 font-sans"
+                        >
+                          {block.code}: {block.label || 'Session Window'} ({block.startTime} – {block.endTime} WAT){active ? ' ★ Active Now' : ''}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                    <ChevronDown className="w-4 h-4" />
+                  </div>
+                </div>
+
+                {selectedBlock ? (
+                  <div className="mt-1.5 p-2.5 rounded-xl bg-[#121722] border border-[#1e2738] flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-2">
+                      <div
+                        className="w-2 h-2 rounded-full"
+                        style={{
+                          backgroundColor: isBlockActive(selectedBlock) ? '#00FF66' : '#94A3B8',
+                        }}
+                      />
+                      <span className="text-white font-semibold">{selectedBlock.label || selectedBlock.code}</span>
+                      <span className="text-slate-400 font-mono text-[11px]">
+                        ({selectedBlock.startTime} – {selectedBlock.endTime} WAT)
+                      </span>
+                    </div>
+                    <span
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider font-mono ${
+                        isBlockActive(selectedBlock)
+                          ? 'bg-[#00FF66]/15 text-[#00FF66] border border-[#00FF66]/30'
+                          : 'bg-slate-800 text-slate-400 border border-slate-700'
+                      }`}
+                    >
+                      {isBlockActive(selectedBlock) ? 'Active Window' : 'Scheduled'}
+                    </span>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-slate-400 mt-1 pl-1">
+                    Select from the {availableTimeBlocks.length} time block{availableTimeBlocks.length > 1 ? 's' : ''} provided by the coordinator
+                  </p>
+                )}
+              </div>
+            ) : (
+              <FloatingInput
+                id="input-time-block-code"
+                label="Time-Block Code (Optional)"
+                value={timeBlockCode}
+                onChange={(e) => setTimeBlockCode(e.target.value.toUpperCase())}
+                hint="No specific time blocks set by coordinator (optional)"
+                isMono
+                maxLength={6}
+                autoComplete="off"
+              />
+            )}
           </div>
 
           {/* Section 2: Real-time Geofence Verification */}
@@ -1067,12 +1259,35 @@ export function AttendanceForm({
         /* Campaign Not Found / Manual Short Code Lookup Form */
         <div id="manual-campaign-lookup" className="rounded-2xl bg-[#0e121a] border border-[#1e273a] p-6 text-center">
           <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 mx-auto mb-3">
-            <AlertOctagon className="w-6 h-6" />
+            <QrCode className="w-6 h-6 text-[#00FF66]" />
           </div>
-          <h3 className="text-base font-bold text-white mb-1">Enter Attendance Session Code</h3>
+          <h3 className="text-base font-bold text-white mb-1">Scan or Enter Session Code</h3>
           <p className="text-xs text-slate-400 max-w-xs mx-auto mb-5 leading-relaxed">
-            {campaignError || 'Enter the alphanumeric session code displayed by your Coordinator or projected at the venue.'}
+            {campaignError || 'Scan the projected QR code or enter the session code displayed by your Coordinator.'}
           </p>
+
+          {/* Primary Quick Action: Scan QR Code */}
+          <div className="max-w-xs mx-auto mb-4">
+            <button
+              id="btn-scan-session-qr"
+              type="button"
+              onClick={() => setIsQRScannerOpen(true)}
+              className="w-full py-3.5 px-4 rounded-xl font-bold text-xs flex items-center justify-center space-x-2 text-[#0a0c10] shadow-[0_0_20px_rgba(0,255,102,0.3)] hover:brightness-110 active:scale-[0.99] transition-all cursor-pointer"
+              style={{ backgroundColor: accentColor }}
+            >
+              <QrCode className="w-4 h-4 text-black" />
+              <span>Scan Session QR Code</span>
+            </button>
+
+            <div className="relative my-4 text-center">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-[#1e2738]" />
+              </div>
+              <span className="relative bg-[#0e121a] px-3 text-[10px] uppercase font-bold tracking-wider text-slate-500">
+                Or enter session code
+              </span>
+            </div>
+          </div>
 
           <form onSubmit={handleResolveManualShortCode} className="max-w-xs mx-auto space-y-3">
             <div className="relative">
@@ -1091,18 +1306,26 @@ export function AttendanceForm({
               id="btn-resolve-code"
               type="submit"
               disabled={resolvingCode || shortCodeInput.trim().length < 3}
-              className="w-full py-3 px-4 rounded-xl bg-[#00FF66] text-[#0a0c10] font-bold text-xs flex items-center justify-center space-x-2 shadow-[0_0_15px_rgba(0,255,102,0.3)] disabled:opacity-50"
+              className="w-full py-3 px-4 rounded-xl bg-[#182333] hover:bg-[#202e44] border border-[#27384f] text-white font-bold text-xs flex items-center justify-center space-x-2 transition-colors disabled:opacity-50 cursor-pointer"
             >
               {resolvingCode ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <Loader2 className="w-4 h-4 animate-spin text-[#00FF66]" />
               ) : (
-                <Search className="w-4 h-4" />
+                <Search className="w-4 h-4 text-[#00FF66]" />
               )}
               <span>Load Session</span>
             </button>
           </form>
         </div>
       )}
+
+      {/* QR Code Scanner Viewfinder Modal */}
+      <QRScannerModal
+        isOpen={isQRScannerOpen}
+        onClose={() => setIsQRScannerOpen(false)}
+        onScanSuccess={handleCodeDetected}
+        accentColor={accentColor}
+      />
     </div>
   );
 }

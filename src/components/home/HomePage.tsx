@@ -241,27 +241,39 @@ export function HomePage({
             </p>
           </div>
 
-          <form onSubmit={handleCodeSubmit} className="w-full md:w-auto flex flex-col sm:flex-row gap-2.5 shrink-0">
-            <div className="relative">
-              <input
-                id="input-home-shortcode"
-                type="text"
-                placeholder="Enter Session Code"
-                value={manualCode}
-                onChange={(e) => setManualCode(e.target.value)}
-                className="w-full sm:w-56 bg-[#090c12] border border-[#263142] text-white text-xs sm:text-sm rounded-xl px-3.5 py-3 outline-none focus:border-[#00FF66] placeholder:text-slate-500 font-mono uppercase"
-              />
-            </div>
+          <div className="w-full md:w-auto flex flex-col sm:flex-row gap-2.5 shrink-0 items-stretch sm:items-center">
             <button
-              id="btn-home-attend-submit"
-              type="submit"
-              className="px-5 py-3 rounded-xl font-bold text-xs sm:text-sm text-[#0a0c10] flex items-center justify-center space-x-2 cursor-pointer transition-all"
-              style={{ backgroundColor: activeColor }}
+              id="btn-home-scan-qr"
+              type="button"
+              onClick={() => onNavigateToAttend()}
+              className="px-4 py-3 rounded-xl font-bold text-xs sm:text-sm bg-[#162030] hover:bg-[#1e2c42] text-white border border-[#2b3a52] flex items-center justify-center space-x-2 cursor-pointer transition-all shadow-sm"
+              title="Open QR scanner to scan session code"
             >
-              <span>Go to Attendance</span>
-              <ArrowRight className="w-4 h-4 text-black" />
+              <QrCode className="w-4 h-4 text-[#00FF66]" />
+              <span>Scan QR Code</span>
             </button>
-          </form>
+            <form onSubmit={handleCodeSubmit} className="flex flex-col sm:flex-row gap-2.5 flex-1">
+              <div className="relative flex-1">
+                <input
+                  id="input-home-shortcode"
+                  type="text"
+                  placeholder="Enter Session Code"
+                  value={manualCode}
+                  onChange={(e) => setManualCode(e.target.value)}
+                  className="w-full sm:w-52 bg-[#090c12] border border-[#263142] text-white text-xs sm:text-sm rounded-xl px-3.5 py-3 outline-none focus:border-[#00FF66] placeholder:text-slate-500 font-mono uppercase"
+                />
+              </div>
+              <button
+                id="btn-home-attend-submit"
+                type="submit"
+                className="px-5 py-3 rounded-xl font-bold text-xs sm:text-sm text-[#0a0c10] flex items-center justify-center space-x-2 cursor-pointer transition-all shadow-[0_0_15px_rgba(0,255,102,0.25)] hover:brightness-105"
+                style={{ backgroundColor: activeColor }}
+              >
+                <span>Go to Attendance</span>
+                <ArrowRight className="w-4 h-4 text-black" />
+              </button>
+            </form>
+          </div>
         </div>
       </section>
 
