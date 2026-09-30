@@ -18,9 +18,8 @@ import {
   HelpCircle,
   QrCode,
   Tag,
-  KeyRound,
 } from 'lucide-react';
-import { signUpAdmin, signInAdmin, signInWithGoogle } from '../../services/firebase';
+import { signUpAdmin, signInAdmin, signInWithGoogle, getReadableFirebaseError, getFirebaseConfigStatus } from '../../services/firebase';
 import { Organization, UserProfile } from '../../types/attendance';
 import { useToast } from '../common/Toast';
 
@@ -293,16 +292,7 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend, onNavigateToHome }
       showToast('success', `Welcome! Organization "${res.org.name}" has been registered.`);
       onAuthSuccess(res.org, res.profile, true);
     } catch (err: unknown) {
-      const originalMsg = err instanceof Error ? err.message : 'Registration failed.';
-      let msg = originalMsg;
-      if (originalMsg.includes('auth/api-key-not-valid')) {
-        msg = 'Firebase API key configuration is missing or invalid. Please check your Firebase settings.';
-      } else if (originalMsg.includes('auth/operation-not-allowed')) {
-        msg =
-          'Email/Password sign-in is not enabled in Firebase Console. Please enable "Email/Password" under Authentication -> Sign-in method, or sign in using Google.';
-      } else if (originalMsg.includes('auth/email-already-in-use')) {
-        msg = 'An account with this email address already exists. Please sign in instead.';
-      }
+      const msg = getReadableFirebaseError(err);
       setError(msg);
       showToast('error', msg, 'Sign Up Failed');
     } finally {
@@ -333,18 +323,7 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend, onNavigateToHome }
         setError('No organization linked to this account.');
       }
     } catch (err: unknown) {
-      const originalMsg = err instanceof Error ? err.message : 'Authentication failed.';
-      let msg = originalMsg;
-      if (originalMsg.includes('auth/api-key-not-valid')) {
-        msg = 'Firebase API key configuration is missing or invalid. Please check your Firebase settings.';
-      } else if (originalMsg.includes('auth/operation-not-allowed')) {
-        msg =
-          'Email/Password sign-in is not enabled in Firebase Console. Please enable "Email/Password" under Firebase Console -> Authentication -> Sign-in method, or sign in using Google.';
-      } else if (originalMsg.includes('auth/invalid-credential') || originalMsg.includes('auth/wrong-password')) {
-        msg = 'Incorrect email or password. Please verify your credentials and try again.';
-      } else if (originalMsg.includes('auth/user-not-found')) {
-        msg = 'No user account found with this email. Please create an organization first.';
-      }
+      const msg = getReadableFirebaseError(err);
       setError(msg);
       showToast('error', msg, 'Sign In Failed');
     } finally {
@@ -366,24 +345,15 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend, onNavigateToHome }
         onAuthSuccess(res.org, undefined, isNew);
       }
     } catch (err: unknown) {
-      const originalMsg = err instanceof Error ? err.message : 'Google authentication failed.';
-      let msg = originalMsg;
-      if (originalMsg.includes('auth/api-key-not-valid')) {
-        msg = 'Firebase API key configuration is missing or invalid. Please check your Firebase settings.';
-      }
+      const msg = getReadableFirebaseError(err);
       setError(msg);
-      showToast('error', msg);
+      showToast('error', msg, 'Google Sign In Failed');
     } finally {
       setLoading(false);
     }
   };
 
-  // Quick Demo Autofill Helper for Testing
-  const handlePrefillDemoSuperuser = () => {
-    setSignInIdentifier('admin');
-    setSignInPassword('admin');
-    setError(null);
-  };
+  const configStatus = useMemo(() => getFirebaseConfigStatus(), []);
 
   return (
     <div className="max-w-xl mx-auto w-full px-4 py-4 sm:py-6">
@@ -420,6 +390,17 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend, onNavigateToHome }
           className="absolute -top-24 -right-24 w-48 h-48 rounded-full blur-3xl opacity-20 pointer-events-none transition-colors duration-500"
           style={{ backgroundColor: tab === 'signup' ? accentColor : '#00FF66' }}
         />
+
+        {/* Firebase Configuration Notice if environment issues detected */}
+        {configStatus.error && !configStatus.hasValidApiKey && (
+          <div className="mb-5 p-3.5 rounded-xl bg-amber-950/60 border border-amber-500/40 text-amber-200 text-xs flex items-start gap-2.5 shadow-md animate-in fade-in">
+            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <div className="flex-1 text-[11px] leading-relaxed">
+              <span className="font-bold block mb-0.5 text-amber-300">Configuration Notice</span>
+              {configStatus.error}
+            </div>
+          </div>
+        )}
 
         {/* Tab Switcher */}
         <div className="flex bg-[#0a0c12] p-1 rounded-xl border border-[#1e2638] mb-6">
@@ -495,20 +476,9 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend, onNavigateToHome }
             </div>
 
             <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                  Password
-                </label>
-                <button
-                  type="button"
-                  onClick={handlePrefillDemoSuperuser}
-                  className="text-[10px] text-slate-400 hover:text-[#00FF66] transition-colors font-mono cursor-pointer flex items-center gap-1"
-                  title="Autofill default admin credentials for testing"
-                >
-                  <KeyRound className="w-3 h-3 text-[#00FF66]" />
-                  <span>Demo Admin Fill</span>
-                </button>
-              </div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
+                Password
+              </label>
               <div className="relative">
                 <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-3.5 pointer-events-none" />
                 <input

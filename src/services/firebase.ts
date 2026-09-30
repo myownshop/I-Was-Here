@@ -1,4 +1,4 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import {
   getAuth,
   createUserWithEmailAndPassword,
@@ -39,8 +39,12 @@ import {
 import { calculateHaversineDistance } from '../utils/geo';
 import { parseCampaignDate } from '../utils/dateUtils';
 
+// ==========================================
+// FIREBASE CONFIGURATION & INITIALIZATION
+// ==========================================
+
 // Default project credentials for the IWasHere application
-const DEFAULT_FIREBASE_CONFIG = {
+export const DEFAULT_FIREBASE_CONFIG = {
   apiKey: 'AIzaSyCkNMjZN-Gd28I6Zt-d2TrJBbbhOoG8xTk',
   authDomain: 'gen-lang-client-0333885172.firebaseapp.com',
   projectId: 'gen-lang-client-0333885172',
@@ -50,42 +54,151 @@ const DEFAULT_FIREBASE_CONFIG = {
   databaseId: 'ai-studio-ca7b28f3-1445-4796-a4ef-7a4db6a02fa8',
 };
 
-// Initialize Firebase App from environment variables with safe defaults for local/preview modes
-const envApiKey = import.meta.env.VITE_FIREBASE_API_KEY;
-const isPlaceholderKey = !envApiKey || envApiKey.startsWith('YOUR_') || envApiKey.startsWith('MY_');
+export interface FirebaseConfigStatus {
+  isConfigured: boolean;
+  apiKeySource: 'environment' | 'project_default' | 'missing';
+  projectId: string;
+  hasValidApiKey: boolean;
+  error: string | null;
+}
+
+export function isValidFirebaseApiKey(key: unknown): boolean {
+  if (!key || typeof key !== 'string') return false;
+  const trimmed = key.trim();
+  if (trimmed.length < 20) return false;
+  if (
+    trimmed.startsWith('YOUR_') ||
+    trimmed.startsWith('MY_') ||
+    trimmed.includes('Placeholder') ||
+    trimmed === 'undefined' ||
+    trimmed === 'null'
+  ) {
+    return false;
+  }
+  return true;
+}
+
+// 1. Resolve environment variables
+const rawEnvApiKey = (import.meta.env.VITE_FIREBASE_API_KEY as string | undefined)?.trim();
+const hasValidEnvApiKey = isValidFirebaseApiKey(rawEnvApiKey);
+
+let resolvedApiKey = '';
+let apiKeySource: 'environment' | 'project_default' | 'missing' = 'missing';
+let initialConfigError: string | null = null;
+
+if (hasValidEnvApiKey) {
+  resolvedApiKey = rawEnvApiKey!;
+  apiKeySource = 'environment';
+} else if (isValidFirebaseApiKey(DEFAULT_FIREBASE_CONFIG.apiKey)) {
+  resolvedApiKey = DEFAULT_FIREBASE_CONFIG.apiKey;
+  apiKeySource = 'project_default';
+  if (rawEnvApiKey && !hasValidEnvApiKey) {
+    initialConfigError = 'VITE_FIREBASE_API_KEY contains a placeholder value. Using project default configuration.';
+  }
+} else {
+  apiKeySource = 'missing';
+  initialConfigError = 'No valid Firebase API key found. Please set VITE_FIREBASE_API_KEY in your environment configuration.';
+}
 
 const firebaseConfig = {
-  apiKey: !isPlaceholderKey ? envApiKey : DEFAULT_FIREBASE_CONFIG.apiKey,
+  apiKey: resolvedApiKey,
   authDomain:
-    import.meta.env.VITE_FIREBASE_AUTH_DOMAIN && !import.meta.env.VITE_FIREBASE_AUTH_DOMAIN.startsWith('YOUR_')
-      ? import.meta.env.VITE_FIREBASE_AUTH_DOMAIN
-      : DEFAULT_FIREBASE_CONFIG.authDomain,
+    ((import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string | undefined)?.trim()) ||
+    DEFAULT_FIREBASE_CONFIG.authDomain,
   projectId:
-    import.meta.env.VITE_FIREBASE_PROJECT_ID && !import.meta.env.VITE_FIREBASE_PROJECT_ID.startsWith('YOUR_')
-      ? import.meta.env.VITE_FIREBASE_PROJECT_ID
-      : DEFAULT_FIREBASE_CONFIG.projectId,
+    ((import.meta.env.VITE_FIREBASE_PROJECT_ID as string | undefined)?.trim()) ||
+    DEFAULT_FIREBASE_CONFIG.projectId,
   storageBucket:
-    import.meta.env.VITE_FIREBASE_STORAGE_BUCKET && !import.meta.env.VITE_FIREBASE_STORAGE_BUCKET.startsWith('YOUR_')
-      ? import.meta.env.VITE_FIREBASE_STORAGE_BUCKET
-      : DEFAULT_FIREBASE_CONFIG.storageBucket,
+    ((import.meta.env.VITE_FIREBASE_STORAGE_BUCKET as string | undefined)?.trim()) ||
+    DEFAULT_FIREBASE_CONFIG.storageBucket,
   messagingSenderId:
-    import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID &&
-    !import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID.startsWith('YOUR_')
-      ? import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID
-      : DEFAULT_FIREBASE_CONFIG.messagingSenderId,
+    ((import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID as string | undefined)?.trim()) ||
+    DEFAULT_FIREBASE_CONFIG.messagingSenderId,
   appId:
-    import.meta.env.VITE_FIREBASE_APP_ID && !import.meta.env.VITE_FIREBASE_APP_ID.startsWith('YOUR_')
-      ? import.meta.env.VITE_FIREBASE_APP_ID
-      : DEFAULT_FIREBASE_CONFIG.appId,
+    ((import.meta.env.VITE_FIREBASE_APP_ID as string | undefined)?.trim()) ||
+    DEFAULT_FIREBASE_CONFIG.appId,
 };
 
-const rawDbId = import.meta.env.VITE_FIREBASE_DATABASE_ID;
+const rawDbId = (import.meta.env.VITE_FIREBASE_DATABASE_ID as string | undefined)?.trim();
 const firestoreDatabaseId =
-  rawDbId && !rawDbId.startsWith('YOUR_') && !rawDbId.startsWith('MY_')
+  rawDbId && !rawDbId.startsWith('YOUR_') && !rawDbId.startsWith('MY_') && rawDbId !== 'undefined'
     ? rawDbId
     : DEFAULT_FIREBASE_CONFIG.databaseId;
 
-const app = initializeApp(firebaseConfig);
+export function getFirebaseConfigStatus(): FirebaseConfigStatus {
+  return {
+    isConfigured: isValidFirebaseApiKey(resolvedApiKey),
+    apiKeySource,
+    projectId: firebaseConfig.projectId,
+    hasValidApiKey: isValidFirebaseApiKey(resolvedApiKey),
+    error: initialConfigError,
+  };
+}
+
+export function getReadableFirebaseError(error: unknown): string {
+  if (!error) return 'An unexpected authentication error occurred.';
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (
+    message.includes('auth/api-key-not-valid') ||
+    message.includes('auth/invalid-api-key') ||
+    message.includes('API_KEY_INVALID') ||
+    message.includes('API key not valid')
+  ) {
+    return 'Invalid Firebase API Key. Please verify that VITE_FIREBASE_API_KEY in your environment configuration is active and has the Identity Toolkit API enabled.';
+  }
+  if (message.includes('auth/operation-not-allowed')) {
+    return 'Email/Password sign-in is not enabled in Firebase Console. Please enable "Email/Password" under Firebase Console -> Authentication -> Sign-in method, or sign in using Google.';
+  }
+  if (message.includes('auth/email-already-in-use')) {
+    return 'An account with this email address already exists. Please sign in instead.';
+  }
+  if (message.includes('auth/invalid-credential') || message.includes('auth/wrong-password')) {
+    return 'Incorrect email or password. Please verify your credentials and try again.';
+  }
+  if (message.includes('auth/user-not-found')) {
+    return 'No user account found with this email. Please register your organization first.';
+  }
+  if (message.includes('auth/popup-closed-by-user')) {
+    return 'Sign-in cancelled: The Google popup was closed before completing.';
+  }
+  if (message.includes('auth/unauthorized-domain')) {
+    return 'This domain is not authorized in Firebase Console. Please add it under Authentication -> Settings -> Authorized domains.';
+  }
+  if (message.includes('auth/network-request-failed')) {
+    return 'Network connection failed while contacting Firebase. Please check your internet connection.';
+  }
+  if (message.includes('auth/too-many-requests')) {
+    return 'Access temporarily blocked due to too many failed attempts. Please try again later.';
+  }
+  if (message.includes('auth/weak-password')) {
+    return 'Password is too weak. Please use at least 6 characters.';
+  }
+  if (message.includes('auth/invalid-email')) {
+    return 'Invalid email address format. Please enter a valid email address.';
+  }
+
+  const cleaned = message.replace(/^Firebase:\s*(?:Error\s*)?(?:\([^)]+\)\.?\s*)?/i, '').trim();
+  return cleaned || message;
+}
+
+let app: FirebaseApp;
+try {
+  const existingApps = getApps();
+  if (existingApps.length > 0) {
+    app = existingApps[0];
+  } else {
+    app = initializeApp(firebaseConfig);
+  }
+} catch (err) {
+  console.error('Firebase initializeApp error:', err);
+  initialConfigError = err instanceof Error ? err.message : 'Failed to initialize Firebase App.';
+  try {
+    app = getApp();
+  } catch {
+    app = initializeApp(DEFAULT_FIREBASE_CONFIG);
+  }
+}
 
 // CRITICAL: Initialize Firestore with experimentalForceLongPolling for robust connection in iframe/proxy environments
 let firestoreDb;
@@ -530,6 +643,11 @@ export async function signUpAdmin(
   accentColor = '#00FF66',
   extraOrgFields?: Partial<Organization>
 ): Promise<{ user: User; org: Organization; profile: UserProfile }> {
+  const config = getFirebaseConfigStatus();
+  if (!config.hasValidApiKey) {
+    throw new Error('Firebase is not configured with a valid API key. Please check VITE_FIREBASE_API_KEY in your environment configuration.');
+  }
+
   const cred = await createUserWithEmailAndPassword(auth, email, password);
   await updateProfile(cred.user, { displayName: adminName });
 
@@ -611,6 +729,11 @@ export async function signInAdmin(
     };
   }
 
+  const config = getFirebaseConfigStatus();
+  if (!config.hasValidApiKey) {
+    throw new Error('Firebase is not configured with a valid API key. Please check VITE_FIREBASE_API_KEY in your environment configuration.');
+  }
+
   const cred = await signInWithEmailAndPassword(auth, emailOrUsername, password);
   let profile = await getUserProfile(cred.user.uid);
   let org: Organization | null = null;
@@ -645,6 +768,11 @@ export async function signInWithGoogle(): Promise<{
   org: Organization | null;
   profile: UserProfile | null;
 }> {
+  const config = getFirebaseConfigStatus();
+  if (!config.hasValidApiKey) {
+    throw new Error('Firebase is not configured with a valid API key. Please check VITE_FIREBASE_API_KEY in your environment configuration.');
+  }
+
   const cred = await signInWithPopup(auth, googleProvider);
   let profile = await getUserProfile(cred.user.uid);
   let org: Organization | null = null;
