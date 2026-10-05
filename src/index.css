@@ -54,6 +54,25 @@
   font-family: inherit;
 }
 
+/* Fix Leaflet custom div icon background & borders */
+.leaflet-div-icon {
+  background: transparent !important;
+  border: none !important;
+}
+
+/* Sleek Leaflet Dark Popup */
+.leaflet-popup-content-wrapper {
+  background: #0f1622 !important;
+  color: #f1f5f9 !important;
+  border: 1px solid #1e293b !important;
+  border-radius: 12px !important;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5) !important;
+}
+
+.leaflet-popup-tip {
+  background: #0f1622 !important;
+}
+
 /* Hide scrollbar utility */
 .no-scrollbar::-webkit-scrollbar {
   display: none;

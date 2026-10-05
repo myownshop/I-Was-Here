@@ -16,29 +16,30 @@ export function calculateHaversineDistance(
   lat2: number,
   lon2: number
 ): number {
+  const nLat1 = typeof lat1 === 'number' ? lat1 : Number(lat1);
+  const nLon1 = typeof lon1 === 'number' ? lon1 : Number(lon1);
+  const nLat2 = typeof lat2 === 'number' ? lat2 : Number(lat2);
+  const nLon2 = typeof lon2 === 'number' ? lon2 : Number(lon2);
+
   if (
-    typeof lat1 !== 'number' ||
-    typeof lon1 !== 'number' ||
-    typeof lat2 !== 'number' ||
-    typeof lon2 !== 'number' ||
-    isNaN(lat1) ||
-    isNaN(lon1) ||
-    isNaN(lat2) ||
-    isNaN(lon2)
+    isNaN(nLat1) ||
+    isNaN(nLon1) ||
+    isNaN(nLat2) ||
+    isNaN(nLon2)
   ) {
     throw new Error('Invalid coordinates: all coordinates must be valid numbers.');
   }
 
-  if (lat1 < -90 || lat1 > 90 || lat2 < -90 || lat2 > 90) {
+  if (nLat1 < -90 || nLat1 > 90 || nLat2 < -90 || nLat2 > 90) {
     throw new Error('Invalid latitude: latitude must be between -90 and 90 degrees.');
   }
 
-  if (lon1 < -180 || lon1 > 180 || lon2 < -180 || lon2 > 180) {
+  if (nLon1 < -180 || nLon1 > 180 || nLon2 < -180 || nLon2 > 180) {
     throw new Error('Invalid longitude: longitude must be between -180 and 180 degrees.');
   }
 
   // Identical coordinates check
-  if (lat1 === lat2 && lon1 === lon2) {
+  if (nLat1 === nLat2 && nLon1 === nLon2) {
     return 0;
   }
 
@@ -46,10 +47,10 @@ export function calculateHaversineDistance(
 
   const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
 
-  const phi1 = toRadians(lat1);
-  const phi2 = toRadians(lat2);
-  const deltaPhi = toRadians(lat2 - lat1);
-  const deltaLambda = toRadians(lon2 - lon1);
+  const phi1 = toRadians(nLat1);
+  const phi2 = toRadians(nLat2);
+  const deltaPhi = toRadians(nLat2 - nLat1);
+  const deltaLambda = toRadians(nLon2 - nLon1);
 
   const sinDeltaPhiHalf = Math.sin(deltaPhi / 2);
   const sinDeltaLambdaHalf = Math.sin(deltaLambda / 2);
@@ -165,126 +166,193 @@ export function getLastKnownCoordinates(maxAgeMs = 7200000): GeoLocationCoordina
  * Implements high-accuracy GNSS hardware satellite query, multi-attempt accuracy refinement,
  * and clear user instructions.
  */
-export async function getCurrentCoordinates(): Promise<GeoLocationCoordinates> {
+export interface GetCoordinatesOptions {
+  enableHighAccuracy?: boolean;
+  timeout?: number;
+  maximumAge?: number;
+  allowCachedFallback?: boolean;
+}
+
+/**
+ * Validates whether latitude and longitude are valid finite numbers within Earth bounds.
+ */
+export function isCoordinatesValid(lat: unknown, lng: unknown): boolean {
+  const nLat = typeof lat === 'number' ? lat : Number(lat);
+  const nLng = typeof lng === 'number' ? lng : Number(lng);
+  return (
+    !isNaN(nLat) &&
+    !isNaN(nLng) &&
+    nLat >= -90 &&
+    nLat <= 90 &&
+    nLng >= -180 &&
+    nLng <= 180 &&
+    // Not unconfigured 0,0 Null Island
+    !(nLat === 0 && nLng === 0)
+  );
+}
+
+/**
+ * Robust Member Device Location Acquisition Engine:
+ * Strictly acquires real-time GPS / WiFi / Cell sensor coordinates directly
+ * from the member's device using standard navigator.geolocation.
+ *
+ * Implements high-accuracy GNSS hardware satellite query, multi-attempt accuracy refinement,
+ * graceful fallback, and live continuous streaming.
+ */
+export async function getCurrentCoordinates(
+  options: GetCoordinatesOptions = {}
+): Promise<GeoLocationCoordinates> {
   if (typeof window === 'undefined' || !navigator?.geolocation) {
     throw new Error('Geolocation is not supported by your browser or device.');
   }
 
+  const {
+    enableHighAccuracy = true,
+    timeout = 8000,
+    maximumAge = 3000,
+    allowCachedFallback = true,
+  } = options;
+
   // Helper promise for browser getCurrentPosition
-  const requestPosition = (options: PositionOptions): Promise<GeoLocationCoordinates> => {
+  const requestPosition = (opts: PositionOptions): Promise<GeoLocationCoordinates> => {
     return new Promise((resolve, reject) => {
       navigator.geolocation.getCurrentPosition(
         (position) => {
           resolve({
             latitude: Number(position.coords.latitude.toFixed(6)),
             longitude: Number(position.coords.longitude.toFixed(6)),
-            accuracy: position.coords.accuracy || 10,
+            accuracy: Math.round(position.coords.accuracy || 10),
           });
         },
         (error) => reject(error),
-        options
+        opts
       );
     });
   };
 
-  // Helper for fast watchPosition stream fix to acquire satellite lock
-  const requestWatchFix = (timeoutMs: number): Promise<GeoLocationCoordinates> => {
-    return new Promise((resolve, reject) => {
-      let watchId: number | null = null;
-      let bestPosition: GeoLocationCoordinates | null = null;
-
-      const timer = setTimeout(() => {
-        if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-        if (bestPosition) {
-          resolve(bestPosition);
-        } else {
-          reject(new Error('Location stream timeout'));
-        }
-      }, timeoutMs);
-
-      try {
-        watchId = navigator.geolocation.watchPosition(
-          (pos) => {
-            const currentAcc = pos.coords.accuracy || 20;
-            const currentFix: GeoLocationCoordinates = {
-              latitude: Number(pos.coords.latitude.toFixed(6)),
-              longitude: Number(pos.coords.longitude.toFixed(6)),
-              accuracy: currentAcc,
-            };
-
-            if (!bestPosition || currentAcc < (bestPosition.accuracy || 100)) {
-              bestPosition = currentFix;
-            }
-
-            // If we obtained a great fix (<= 15m), complete immediately
-            if (currentAcc <= 15) {
-              clearTimeout(timer);
-              if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-              resolve(currentFix);
-            }
-          },
-          (err) => {
-            if (!bestPosition) {
-              clearTimeout(timer);
-              if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-              reject(err);
-            }
-          },
-          { enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 0 }
+  // Attempt 1: High-accuracy GNSS hardware sensor query
+  if (enableHighAccuracy) {
+    try {
+      const highAccResult = await requestPosition({
+        enableHighAccuracy: true,
+        timeout: Math.min(timeout, 8000),
+        maximumAge,
+      });
+      saveLastKnownCoordinates(highAccResult);
+      return highAccResult;
+    } catch (err: unknown) {
+      if (
+        err instanceof GeolocationPositionError &&
+        err.code === err.PERMISSION_DENIED
+      ) {
+        throw new Error(
+          'Location permission was denied. Please allow location access in your browser settings so your actual attendance location can be verified.'
         );
-      } catch (err) {
-        clearTimeout(timer);
-        reject(err);
       }
-    });
-  };
+      // Weak satellite or timeout indoors -> fall through to standard WiFi / Cell triangulation
+    }
+  }
 
-  let permissionDenied = false;
-
-  // Primary Attempt: High-accuracy GNSS / device sensor location
+  // Attempt 2: Standard Accuracy (WiFi / Cell Triangulation - fast & dependable indoors)
   try {
-    const highAccuracyPromise = requestPosition({
-      enableHighAccuracy: true,
-      timeout: 9000,
-      maximumAge: 0,
+    const standardResult = await requestPosition({
+      enableHighAccuracy: false,
+      timeout: 6000,
+      maximumAge: 15000,
     });
-
-    const watchStreamPromise = requestWatchFix(7000);
-
-    const fastestResult = await Promise.race([highAccuracyPromise, watchStreamPromise]);
-    saveLastKnownCoordinates(fastestResult);
-    return fastestResult;
+    saveLastKnownCoordinates(standardResult);
+    return standardResult;
   } catch (err: unknown) {
     if (
       err instanceof GeolocationPositionError &&
       err.code === err.PERMISSION_DENIED
     ) {
-      permissionDenied = true;
+      throw new Error(
+        'Location permission was denied. Please allow location access in your browser settings so your actual attendance location can be verified.'
+      );
     }
   }
 
-  if (permissionDenied) {
-    throw new Error(
-      'Location permission was denied. Please allow location access in your browser settings so your actual attendance location can be verified.'
-    );
-  }
-
-  // Secondary Attempt: Standard fix fallback
-  try {
-    const fallbackResult = await requestPosition({
-      enableHighAccuracy: false,
-      timeout: 8000,
-      maximumAge: 5000,
-    });
-    saveLastKnownCoordinates(fallbackResult);
-    return fallbackResult;
-  } catch (err) {
-    console.warn('Fallback GPS attempt error:', err);
+  // Attempt 3: Cached fallback if recently acquired (within last 3 minutes)
+  if (allowCachedFallback) {
+    const recentCached = getLastKnownCoordinates(180000);
+    if (recentCached) {
+      return recentCached;
+    }
   }
 
   throw new Error(
-    'Unable to acquire device GPS coordinates. Please ensure GPS / Location is toggled ON on your phone/computer and tap Refresh.'
+    'Unable to acquire device GPS coordinates. Please ensure Location is enabled in your phone/device settings and tap Refresh.'
   );
+}
+
+/**
+ * Continuous Live GPS Stream Collector:
+ * Continuously watches the member's GPS position as they move towards the signing-in area,
+ * reporting refined coordinates with real-time accuracy updates.
+ * Returns a cleanup unsubscribe function.
+ */
+export function watchLiveCoordinates(
+  onUpdate: (coords: GeoLocationCoordinates) => void,
+  onError?: (error: Error) => void
+): () => void {
+  if (typeof window === 'undefined' || !navigator?.geolocation) {
+    onError?.(new Error('Geolocation is not supported by your browser or device.'));
+    return () => {};
+  }
+
+  let watchId: number | null = null;
+  let hasReceivedFix = false;
+
+  // Immediately notify with recent cached fix if available (zero-latency instant start)
+  const cached = getLastKnownCoordinates(60000);
+  if (cached) {
+    onUpdate(cached);
+  }
+
+  const successCallback: PositionCallback = (pos) => {
+    hasReceivedFix = true;
+    const fix: GeoLocationCoordinates = {
+      latitude: Number(pos.coords.latitude.toFixed(6)),
+      longitude: Number(pos.coords.longitude.toFixed(6)),
+      accuracy: Math.round(pos.coords.accuracy || 10),
+    };
+    saveLastKnownCoordinates(fix);
+    onUpdate(fix);
+  };
+
+  const errorCallback: PositionErrorCallback = (err) => {
+    if (err.code === err.PERMISSION_DENIED) {
+      onError?.(
+        new Error(
+          'Location permission was denied. Please allow location access in your browser settings.'
+        )
+      );
+    } else if (!hasReceivedFix && err.code === err.POSITION_UNAVAILABLE) {
+      onError?.(
+        new Error(
+          'GPS signal unavailable. Please ensure location services are enabled on your device.'
+        )
+      );
+    }
+    // Transient timeouts during continuous watch are ignored as the sensor continues polling
+  };
+
+  try {
+    watchId = navigator.geolocation.watchPosition(successCallback, errorCallback, {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 2000,
+    });
+  } catch (e) {
+    onError?.(e instanceof Error ? e : new Error(String(e)));
+  }
+
+  return () => {
+    if (watchId !== null && typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.clearWatch(watchId);
+    }
+  };
 }
 
 /**

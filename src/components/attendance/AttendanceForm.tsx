@@ -36,7 +36,7 @@ import { ParsedQRResult } from '../../utils/qrParser';
 import { showToast } from '../common/Toast';
 import { CompressionResult } from '../../utils/imageCompression';
 import { formatStateCodeInput, isValidStateCode, getClientIpAddress } from '../../utils/nysc';
-import { formatDistance } from '../../utils/geo';
+import { formatDistance, isCoordinatesValid } from '../../utils/geo';
 import { encryptOfflineRecord, downloadIwhFile } from '../../utils/crypto';
 import { serializeAndStoreAttendance } from '../../utils/indexedDB';
 import { isTamperingDetected } from '../../utils/antiTampering';
@@ -390,6 +390,15 @@ export function AttendanceForm({
     }
 
     // 3. Member Geolocation constraint check
+    if (!isCoordinatesValid(campaign.targetLatitude, campaign.targetLongitude)) {
+      showToast(
+        'error',
+        'Intended sign-in area coordinates have not been configured by the coordinator for this session.',
+        'Venue Not Set'
+      );
+      return;
+    }
+
     if (
       !currentCoords ||
       typeof currentCoords.latitude !== 'number' ||

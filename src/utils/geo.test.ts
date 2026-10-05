@@ -4,6 +4,7 @@ import {
   calculateDistanceAsync,
   formatDistance,
   parseGoogleMapsUrlOrCoordinates,
+  isCoordinatesValid,
 } from './geo';
 
 describe('Haversine Distance Calculator', () => {
@@ -43,6 +44,16 @@ describe('Haversine Distance Calculator', () => {
     expect(formatDistance(950)).toBe('950 m');
     expect(formatDistance(1250)).toBe('1.25 km');
     expect(formatDistance(50000)).toBe('50.00 km');
+  });
+
+  it('validates coordinate bounds correctly with isCoordinatesValid', () => {
+    expect(isCoordinatesValid(6.5244, 3.3792)).toBe(true);
+    expect(isCoordinatesValid('6.5244', '3.3792')).toBe(true);
+    expect(isCoordinatesValid(0, 0)).toBe(false); // Unset Null Island
+    expect(isCoordinatesValid(NaN, 3.37)).toBe(false);
+    expect(isCoordinatesValid(95, 3.37)).toBe(false);
+    expect(isCoordinatesValid(6.52, 200)).toBe(false);
+    expect(isCoordinatesValid(null, undefined)).toBe(false);
   });
 });
 

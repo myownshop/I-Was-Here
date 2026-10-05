@@ -50,35 +50,40 @@ export function VenueGuidanceMap({
   const geofenceCircleRef = useRef<L.Circle | null>(null);
   const pathLineRef = useRef<L.Polyline | null>(null);
   const tileLayerRef = useRef<L.TileLayer | null>(null);
+  const hasFittedInitialBoundsRef = useRef<boolean>(false);
 
   const [copied, setCopied] = useState(false);
   const [mapTheme, setMapTheme] = useState<'standard' | 'dark'>('standard');
 
+  const targetLat = Number(campaign.targetLatitude);
+  const targetLng = Number(campaign.targetLongitude);
+  const allowedRadius = Number(campaign.allowedRadius) || 100;
+
   // Calculate bearing and compass heading if user coords available
   const bearingInfo =
-    userCoords && campaign.targetLatitude && campaign.targetLongitude
+    userCoords && !isNaN(targetLat) && !isNaN(targetLng)
       ? calculateBearing(
           userCoords.latitude,
           userCoords.longitude,
-          campaign.targetLatitude,
-          campaign.targetLongitude
+          targetLat,
+          targetLng
         )
       : null;
 
   // OpenStreetMap URLs using exact member GPS coordinates
   const osmMemberExactUrl = userCoords
     ? `https://www.openstreetmap.org/?mlat=${userCoords.latitude}&mlon=${userCoords.longitude}#map=19/${userCoords.latitude}/${userCoords.longitude}`
-    : `https://www.openstreetmap.org/?mlat=${campaign.targetLatitude}&mlon=${campaign.targetLongitude}#map=18/${campaign.targetLatitude}/${campaign.targetLongitude}`;
+    : `https://www.openstreetmap.org/?mlat=${targetLat}&mlon=${targetLng}#map=18/${targetLat}/${targetLng}`;
 
   const osmDirectionsUrl = userCoords
-    ? `https://www.openstreetmap.org/directions?engine=fossgis_osrm_foot&route=${userCoords.latitude}%2C${userCoords.longitude}%3B${campaign.targetLatitude}%2C${campaign.targetLongitude}`
+    ? `https://www.openstreetmap.org/directions?engine=fossgis_osrm_foot&route=${userCoords.latitude}%2C${userCoords.longitude}%3B${targetLat}%2C${targetLng}`
     : osmMemberExactUrl;
 
   const googleMapsUrl = userCoords
-    ? `https://www.google.com/maps/dir/?api=1&origin=${userCoords.latitude},${userCoords.longitude}&destination=${campaign.targetLatitude},${campaign.targetLongitude}&travelmode=walking`
+    ? `https://www.google.com/maps/dir/?api=1&origin=${userCoords.latitude},${userCoords.longitude}&destination=${targetLat},${targetLng}&travelmode=walking`
     : getGoogleMapsNavigationUrl(
-        campaign.targetLatitude,
-        campaign.targetLongitude,
+        targetLat,
+        targetLng,
         campaign.name
       );
 
@@ -87,8 +92,8 @@ export function VenueGuidanceMap({
     if (!mapContainerRef.current) return;
 
     if (!mapInstanceRef.current) {
-      const initialLat = userCoords?.latitude || campaign.targetLatitude;
-      const initialLng = userCoords?.longitude || campaign.targetLongitude;
+      const initialLat = userCoords?.latitude || targetLat;
+      const initialLng = userCoords?.longitude || targetLng;
 
       const map = L.map(mapContainerRef.current, {
         center: [initialLat, initialLng],
@@ -106,12 +111,17 @@ export function VenueGuidanceMap({
 
       tileLayerRef.current = osmTileLayer;
       mapInstanceRef.current = map;
+
+      // Invalidate map size after layout render to fix any container offset misalignment
+      setTimeout(() => {
+        map.invalidateSize();
+      }, 200);
     }
 
     const map = mapInstanceRef.current;
     if (!map) return;
 
-    // 1. Venue Marker with glowing neon badge
+    // 1. Intended Venue Marker with glowing neon badge
     const venueIcon = L.divIcon({
       className: 'venue-custom-icon',
       html: `
@@ -130,38 +140,38 @@ export function VenueGuidanceMap({
     });
 
     if (venueMarkerRef.current) {
-      venueMarkerRef.current.setLatLng([campaign.targetLatitude, campaign.targetLongitude]);
+      venueMarkerRef.current.setLatLng([targetLat, targetLng]);
     } else {
       venueMarkerRef.current = L.marker(
-        [campaign.targetLatitude, campaign.targetLongitude],
+        [targetLat, targetLng],
         { icon: venueIcon, zIndexOffset: 1000 }
       )
         .addTo(map)
         .bindPopup(
           `<div style="font-family: inherit; padding: 4px;">
-            <strong style="color: #0f172a; font-size: 13px;">${campaign.name}</strong><br/>
-            <span style="color: #475569; font-size: 11px;">Designated CDS Roll Call Venue</span><br/>
-            <span style="display:inline-block; margin-top:4px; font-size:10px; font-weight:700; background:#00FF6620; color:#047857; padding:2px 6px; border-radius:4px;">Allowed Radius: ${campaign.allowedRadius}m</span>
+            <strong style="color: #00FF66; font-size: 13px;">${campaign.name}</strong><br/>
+            <span style="color: #94a3b8; font-size: 11px;">Intended Sign-in Area</span><br/>
+            <span style="display:inline-block; margin-top:4px; font-size:10px; font-weight:700; background:#00FF6620; color:#00FF66; padding:2px 6px; border-radius:4px;">Allowed Radius: ${allowedRadius}m</span>
           </div>`
         );
     }
 
-    // 2. Allowed Geofence Circle around venue
+    // 2. Allowed Geofence Circle around intended area
     if (geofenceCircleRef.current) {
-      geofenceCircleRef.current.setLatLng([campaign.targetLatitude, campaign.targetLongitude]);
-      geofenceCircleRef.current.setRadius(campaign.allowedRadius);
+      geofenceCircleRef.current.setLatLng([targetLat, targetLng]);
+      geofenceCircleRef.current.setRadius(allowedRadius);
       geofenceCircleRef.current.setStyle({
-        color: accentColor,
-        fillColor: accentColor,
+        color: isWithinGeofence ? accentColor : '#f59e0b',
+        fillColor: isWithinGeofence ? accentColor : '#f59e0b',
         fillOpacity: isWithinGeofence ? 0.22 : 0.12,
       });
     } else {
       geofenceCircleRef.current = L.circle(
-        [campaign.targetLatitude, campaign.targetLongitude],
+        [targetLat, targetLng],
         {
-          radius: campaign.allowedRadius,
-          color: accentColor,
-          fillColor: accentColor,
+          radius: allowedRadius,
+          color: isWithinGeofence ? accentColor : '#f59e0b',
+          fillColor: isWithinGeofence ? accentColor : '#f59e0b',
           fillOpacity: isWithinGeofence ? 0.22 : 0.12,
           weight: 2.5,
           dashArray: '6, 6',
@@ -170,12 +180,12 @@ export function VenueGuidanceMap({
     }
 
     // 3. User Live Marker & Accuracy Circle (if GPS acquired)
-    if (userCoords) {
+    if (userCoords && !isNaN(userCoords.latitude) && !isNaN(userCoords.longitude)) {
       const userIcon = L.divIcon({
         className: 'user-custom-icon',
         html: `
           <div style="position: relative; display: flex; align-items: center; justify-content: center; width: 32px; height: 32px;">
-            <div style="position: absolute; width: 32px; height: 32px; border-radius: 9999px; background: #0284c7; opacity: 0.35; animation: pulse 1.5s infinite;"></div>
+            <div style="position: absolute; width: 32px; height: 32px; border-radius: 9999px; background: #0284c7; opacity: 0.4; animation: pulse 1.5s infinite;"></div>
             <div style="width: 18px; height: 18px; border-radius: 9999px; background: #0284c7; border: 2.5px solid #ffffff; box-shadow: 0 0 10px #38bdf8; cursor: pointer;"></div>
           </div>
         `,
@@ -193,8 +203,8 @@ export function VenueGuidanceMap({
           .addTo(map)
           .bindPopup(
             `<div style="font-family: inherit; padding: 4px;">
-              <strong style="color: #0284c7; font-size: 12px;">Your Live Position</strong><br/>
-              <span style="color: #475569; font-size: 11px;">GPS Accuracy: ±${Math.round(userCoords.accuracy || 10)}m</span>
+              <strong style="color: #38bdf8; font-size: 12px;">Your Live Position</strong><br/>
+              <span style="color: #94a3b8; font-size: 11px;">GPS Accuracy: ±${Math.round(userCoords.accuracy || 10)}m</span>
             </div>`
           );
       }
@@ -219,10 +229,10 @@ export function VenueGuidanceMap({
         }
       }
 
-      // 4. Connecting Trajectory Line between User and Venue
+      // 4. Connecting Trajectory Line between User and Intended Venue
       const latlngs: L.LatLngExpression[] = [
         [userCoords.latitude, userCoords.longitude],
-        [campaign.targetLatitude, campaign.targetLongitude],
+        [targetLat, targetLng],
       ];
 
       if (pathLineRef.current) {
@@ -239,20 +249,33 @@ export function VenueGuidanceMap({
         }).addTo(map);
       }
 
-      // Auto fit bounds so both user and venue are visible
-      try {
-        const bounds = L.latLngBounds([
-          [userCoords.latitude, userCoords.longitude],
-          [campaign.targetLatitude, campaign.targetLongitude],
-        ]);
-        map.fitBounds(bounds, { padding: [45, 45], maxZoom: 18 });
-      } catch {
-        // Ignore bounds fitting error
+      // Auto fit bounds on initial load so both user and intended area are framed
+      if (!hasFittedInitialBoundsRef.current) {
+        try {
+          const bounds = L.latLngBounds([
+            [userCoords.latitude, userCoords.longitude],
+            [targetLat, targetLng],
+          ]);
+          map.fitBounds(bounds, { padding: [45, 45], maxZoom: 18 });
+          hasFittedInitialBoundsRef.current = true;
+        } catch {
+          // Ignore bounds fitting error
+        }
       }
     } else {
-      map.setView([campaign.targetLatitude, campaign.targetLongitude], 17);
+      map.setView([targetLat, targetLng], 17);
     }
-  }, [campaign, userCoords, isWithinGeofence, accentColor]);
+  }, [campaign, userCoords, isWithinGeofence, accentColor, targetLat, targetLng, allowedRadius]);
+
+  // Container resize observer for fluid layout and tab switches
+  useEffect(() => {
+    if (!mapContainerRef.current) return;
+    const observer = new ResizeObserver(() => {
+      mapInstanceRef.current?.invalidateSize();
+    });
+    observer.observe(mapContainerRef.current);
+    return () => observer.disconnect();
+  }, []);
 
   // Handle tile theme changes (Standard OSM vs Dark Inverted OSM)
   useEffect(() => {
@@ -283,26 +306,22 @@ export function VenueGuidanceMap({
   }, [userCoords]);
 
   const handleCenterVenue = useCallback(() => {
-    if (mapInstanceRef.current) {
-      mapInstanceRef.current.setView(
-        [campaign.targetLatitude, campaign.targetLongitude],
-        18,
-        { animate: true }
-      );
+    if (mapInstanceRef.current && !isNaN(targetLat) && !isNaN(targetLng)) {
+      mapInstanceRef.current.setView([targetLat, targetLng], 18, { animate: true });
     }
-  }, [campaign.targetLatitude, campaign.targetLongitude]);
+  }, [targetLat, targetLng]);
 
   const handleFitBounds = useCallback(() => {
-    if (mapInstanceRef.current && userCoords) {
+    if (mapInstanceRef.current && userCoords && !isNaN(targetLat) && !isNaN(targetLng)) {
       const bounds = L.latLngBounds([
         [userCoords.latitude, userCoords.longitude],
-        [campaign.targetLatitude, campaign.targetLongitude],
+        [targetLat, targetLng],
       ]);
       mapInstanceRef.current.fitBounds(bounds, { padding: [40, 40], maxZoom: 18 });
     } else if (mapInstanceRef.current) {
       handleCenterVenue();
     }
-  }, [userCoords, campaign.targetLatitude, campaign.targetLongitude, handleCenterVenue]);
+  }, [userCoords, targetLat, targetLng, handleCenterVenue]);
 
   const handleZoomIn = () => {
     mapInstanceRef.current?.zoomIn();
@@ -498,7 +517,7 @@ export function VenueGuidanceMap({
             </span>
           ) : (
             <span className="font-mono text-[11px] text-slate-300">
-              Target Venue: {campaign.targetLatitude.toFixed(5)}, {campaign.targetLongitude.toFixed(5)}
+              Target Venue: {!isNaN(targetLat) ? targetLat.toFixed(5) : '0.00000'}, {!isNaN(targetLng) ? targetLng.toFixed(5) : '0.00000'}
             </span>
           )}
           <button
