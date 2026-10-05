@@ -109,6 +109,7 @@ export default function App() {
     const shortCodeMatch = routeStr.match(/^c\/([a-zA-Z0-9_\-]+)/i);
     if (shortCodeMatch) {
       setTargetShortCode(shortCodeMatch[1]);
+      setTargetCampaignId(undefined);
       setIsSegmentRoute(false);
       setView('attend');
       return;
@@ -118,6 +119,7 @@ export default function App() {
     const campaignMatch = routeStr.match(/^attend\/([a-zA-Z0-9_\-]+)/i);
     if (campaignMatch) {
       setTargetCampaignId(campaignMatch[1]);
+      setTargetShortCode(undefined);
       setIsSegmentRoute(false);
       setView('attend');
       return;
@@ -125,6 +127,8 @@ export default function App() {
 
     // Direct manual attend link: /attend
     if (routeStr.startsWith('attend')) {
+      setTargetShortCode(undefined);
+      setTargetCampaignId(undefined);
       setIsSegmentRoute(false);
       setView('attend');
       return;
@@ -269,8 +273,11 @@ export default function App() {
   const handleLaunchAttendeeFlowWithCode = (code?: string) => {
     if (code) {
       setTargetShortCode(code);
+      setTargetCampaignId(undefined);
       window.location.hash = `#/c/${code}`;
     } else {
+      setTargetShortCode(undefined);
+      setTargetCampaignId(undefined);
       window.location.hash = '#/attend';
     }
     setView('attend');

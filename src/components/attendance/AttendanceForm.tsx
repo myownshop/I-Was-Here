@@ -48,6 +48,9 @@ import {
   submitAttendance,
   getOrganization,
   getAllCampaigns,
+  getOrCreateDefaultActiveCampaign,
+  getCachedActiveCampaign,
+  DEFAULT_STARTER_CAMPAIGN,
 } from '../../services/firebase';
 
 interface AttendanceFormProps {
@@ -63,12 +66,13 @@ export function AttendanceForm({
   onCampaignLoaded,
   onBackToHome,
 }: AttendanceFormProps) {
-  // Campaign & Org State
-  const [campaign, setCampaign] = useState<Campaign | null>(null);
-  const [organization, setOrganization] = useState<Organization | null>(null);
-  const [campaignLoading, setCampaignLoading] = useState<boolean>(
-    Boolean(initialCampaignId || initialShortCode)
+  // Campaign & Org State - initialized synchronously with cached or default active campaign
+  // so clicking the attendance link goes STRAIGHT into signing attendance without any "load session" prompt
+  const [campaign, setCampaign] = useState<Campaign>(() =>
+    getCachedActiveCampaign(initialShortCode, initialCampaignId)
   );
+  const [organization, setOrganization] = useState<Organization | null>(null);
+  const [campaignLoading, setCampaignLoading] = useState<boolean>(false);
   const [campaignError, setCampaignError] = useState<string | null>(null);
 
   // Live countdown and automated scheduling engine hook
@@ -168,78 +172,60 @@ export function AttendanceForm({
     let isCancelled = false;
 
     async function loadCampaign() {
-      // If neither shortCode nor campaignId is specified in URL, automatically load the active or latest roll call
-      // session so clicking on the link goes straight to the attendance form rather than the load session screen.
-      if (!initialShortCode && !initialCampaignId) {
-        setCampaignLoading(true);
-        setCampaignError(null);
-
-        try {
-          const all = await getAllCampaigns();
-          const active = all.find((c) => c.status === 'active' || (!c.status && !c.isClosed));
-          const candidate = active || all[0];
-
-          if (candidate && !isCancelled) {
-            setCampaign(candidate);
-            onCampaignLoadedRef.current?.(candidate);
-
-            if (candidate.orgId) {
-              getOrganization(candidate.orgId)
-                .then((org) => {
-                  if (org && !isCancelled) setOrganization(org);
-                })
-                .catch(() => {});
-            }
-            setCampaignLoading(false);
-            return;
-          }
-        } catch (err) {
-          console.warn('Auto-resolving active session error:', err);
-        }
-
-        if (!isCancelled) {
-          setCampaign(null);
-          setCampaignLoading(false);
-          setCampaignError(null);
-        }
-        return;
-      }
-
       setCampaignLoading(true);
       setCampaignError(null);
 
       try {
         let loaded: Campaign | null = null;
+        const codeToResolve = initialShortCode || initialCampaignId;
 
-        if (initialShortCode) {
-          loaded = await resolveShortCode(initialShortCode);
-        } else if (initialCampaignId) {
-          loaded = await getCampaignById(initialCampaignId);
+        // 1. If link contained a shortCode or campaignId, resolve it
+        if (codeToResolve) {
+          loaded = await resolveShortCode(codeToResolve);
+          if (!loaded && initialCampaignId) {
+            loaded = await getCampaignById(initialCampaignId);
+          }
         }
 
-        if (!isCancelled) {
-          if (loaded) {
-            setCampaign(loaded);
-            onCampaignLoadedRef.current?.(loaded);
+        // 2. If not found by specific code or if link was generic, find active/latest session
+        if (!loaded) {
+          const all = await getAllCampaigns();
+          const active = all.find((c) => c.status === 'active' || (!c.status && !c.isClosed));
+          loaded = active || all[0] || null;
+        }
 
-            // Fetch organization details asynchronously without blocking UI
-            if (loaded.orgId) {
-              getOrganization(loaded.orgId)
-                .then((org) => {
-                  if (org && !isCancelled) setOrganization(org);
-                })
-                .catch(() => {});
-            }
-          } else {
-            setCampaign(null);
-            setCampaignError('Session not found. Please check your link or enter a valid session code.');
+        // 3. If zero campaigns exist in database, provision default active session
+        if (!loaded) {
+          loaded = await getOrCreateDefaultActiveCampaign();
+        }
+
+        if (!isCancelled && loaded) {
+          setCampaign(loaded);
+          onCampaignLoadedRef.current?.(loaded);
+
+          // Fetch organization details asynchronously without blocking UI
+          if (loaded.orgId) {
+            getOrganization(loaded.orgId)
+              .then((org) => {
+                if (org && !isCancelled) setOrganization(org);
+              })
+              .catch(() => {});
           }
         }
       } catch (err) {
         if (!isCancelled) {
-          console.error('Campaign load error:', err);
-          setCampaign(null);
-          setCampaignError('Session not found or network offline. Please enter your session code manually.');
+          console.warn('Campaign background resolve warning:', err);
+          // Fallback to starter campaign so attendee is never stranded on load session screen
+          try {
+            const fallback = await getOrCreateDefaultActiveCampaign();
+            if (!isCancelled && fallback) {
+              setCampaign(fallback);
+              onCampaignLoadedRef.current?.(fallback);
+              return;
+            }
+          } catch {
+            // Keep current campaign
+          }
         }
       } finally {
         if (!isCancelled) setCampaignLoading(false);
@@ -1320,9 +1306,20 @@ export function AttendanceForm({
               {resolvingCode ? (
                 <Loader2 className="w-4 h-4 animate-spin text-[#00FF66]" />
               ) : (
-                <Search className="w-4 h-4 text-[#00FF66]" />
+                <ArrowRight className="w-4 h-4 text-[#00FF66]" />
               )}
-              <span>Load Session</span>
+              <span>Start Attendance Check-In</span>
+            </button>
+            <button
+              id="btn-direct-active-session"
+              type="button"
+              onClick={async () => {
+                const camp = await getOrCreateDefaultActiveCampaign();
+                setCampaign(camp);
+              }}
+              className="w-full py-2.5 px-4 rounded-xl text-slate-400 hover:text-white text-xs font-semibold flex items-center justify-center space-x-1.5 transition-colors cursor-pointer"
+            >
+              <span>Go straight to active session &rarr;</span>
             </button>
           </form>
         </div>

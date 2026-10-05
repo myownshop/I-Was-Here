@@ -191,6 +191,34 @@ export function isCoordinatesValid(lat: unknown, lng: unknown): boolean {
   );
 }
 
+export type GpsErrorCode = 'PERMISSION_DENIED' | 'POSITION_UNAVAILABLE' | 'TIMEOUT' | 'UNKNOWN';
+
+export class GpsError extends Error {
+  code: GpsErrorCode;
+  constructor(message: string, code: GpsErrorCode = 'UNKNOWN') {
+    super(message);
+    this.name = 'GpsError';
+    this.code = code;
+  }
+}
+
+export type GeolocationPermissionState = 'prompt' | 'granted' | 'denied' | 'unsupported';
+
+/**
+ * Checks current browser geolocation permission status via Permissions API.
+ */
+export async function checkGeolocationPermission(): Promise<GeolocationPermissionState> {
+  if (typeof window === 'undefined' || !navigator?.permissions?.query) {
+    return 'unsupported';
+  }
+  try {
+    const status = await navigator.permissions.query({ name: 'geolocation' as PermissionName });
+    return status.state as GeolocationPermissionState;
+  } catch {
+    return 'unsupported';
+  }
+}
+
 /**
  * Robust Member Device Location Acquisition Engine:
  * Strictly acquires real-time GPS / WiFi / Cell sensor coordinates directly
@@ -203,12 +231,12 @@ export async function getCurrentCoordinates(
   options: GetCoordinatesOptions = {}
 ): Promise<GeoLocationCoordinates> {
   if (typeof window === 'undefined' || !navigator?.geolocation) {
-    throw new Error('Geolocation is not supported by your browser or device.');
+    throw new GpsError('Geolocation is not supported by your browser or device.', 'UNKNOWN');
   }
 
   const {
     enableHighAccuracy = true,
-    timeout = 8000,
+    timeout = 9000,
     maximumAge = 3000,
     allowCachedFallback = true,
   } = options;
@@ -230,24 +258,29 @@ export async function getCurrentCoordinates(
     });
   };
 
+  let lastErrCode: GpsErrorCode = 'UNKNOWN';
+
   // Attempt 1: High-accuracy GNSS hardware sensor query
   if (enableHighAccuracy) {
     try {
       const highAccResult = await requestPosition({
         enableHighAccuracy: true,
-        timeout: Math.min(timeout, 8000),
+        timeout: Math.min(timeout, 9000),
         maximumAge,
       });
       saveLastKnownCoordinates(highAccResult);
       return highAccResult;
     } catch (err: unknown) {
-      if (
-        err instanceof GeolocationPositionError &&
-        err.code === err.PERMISSION_DENIED
-      ) {
-        throw new Error(
-          'Location permission was denied. Please allow location access in your browser settings so your actual attendance location can be verified.'
-        );
+      if (err && typeof err === 'object' && 'code' in err) {
+        const pErr = err as GeolocationPositionError;
+        if (pErr.code === 1) {
+          throw new GpsError(
+            'Location permission was denied. Please allow location access in your browser settings so your actual attendance location can be verified.',
+            'PERMISSION_DENIED'
+          );
+        }
+        if (pErr.code === 2) lastErrCode = 'POSITION_UNAVAILABLE';
+        if (pErr.code === 3) lastErrCode = 'TIMEOUT';
       }
       // Weak satellite or timeout indoors -> fall through to standard WiFi / Cell triangulation
     }
@@ -257,32 +290,50 @@ export async function getCurrentCoordinates(
   try {
     const standardResult = await requestPosition({
       enableHighAccuracy: false,
-      timeout: 6000,
+      timeout: 7000,
       maximumAge: 15000,
     });
     saveLastKnownCoordinates(standardResult);
     return standardResult;
   } catch (err: unknown) {
-    if (
-      err instanceof GeolocationPositionError &&
-      err.code === err.PERMISSION_DENIED
-    ) {
-      throw new Error(
-        'Location permission was denied. Please allow location access in your browser settings so your actual attendance location can be verified.'
-      );
+    if (err && typeof err === 'object' && 'code' in err) {
+      const pErr = err as GeolocationPositionError;
+      if (pErr.code === 1) {
+        throw new GpsError(
+          'Location permission was denied. Please allow location access in your browser settings so your actual attendance location can be verified.',
+          'PERMISSION_DENIED'
+        );
+      }
+      if (pErr.code === 2) lastErrCode = 'POSITION_UNAVAILABLE';
+      if (pErr.code === 3) lastErrCode = 'TIMEOUT';
     }
   }
 
-  // Attempt 3: Cached fallback if recently acquired (within last 3 minutes)
+  // Attempt 3: Cached fallback if recently acquired (within last 5 minutes)
   if (allowCachedFallback) {
-    const recentCached = getLastKnownCoordinates(180000);
+    const recentCached = getLastKnownCoordinates(300000);
     if (recentCached) {
       return recentCached;
     }
   }
 
-  throw new Error(
-    'Unable to acquire device GPS coordinates. Please ensure Location is enabled in your phone/device settings and tap Refresh.'
+  if (lastErrCode === 'POSITION_UNAVAILABLE') {
+    throw new GpsError(
+      'Device GPS/Location services are currently turned off on your phone. Please toggle Location ON in your phone settings or quick controls.',
+      'POSITION_UNAVAILABLE'
+    );
+  }
+
+  if (lastErrCode === 'TIMEOUT') {
+    throw new GpsError(
+      'Satellite signal timeout. Move closer to a window or outdoors, and tap to retry GPS acquisition.',
+      'TIMEOUT'
+    );
+  }
+
+  throw new GpsError(
+    'Unable to acquire device GPS coordinates. Please ensure Location is enabled in your phone/device settings and tap Refresh.',
+    lastErrCode
   );
 }
 
@@ -294,10 +345,10 @@ export async function getCurrentCoordinates(
  */
 export function watchLiveCoordinates(
   onUpdate: (coords: GeoLocationCoordinates) => void,
-  onError?: (error: Error) => void
+  onError?: (error: Error, code?: GpsErrorCode) => void
 ): () => void {
   if (typeof window === 'undefined' || !navigator?.geolocation) {
-    onError?.(new Error('Geolocation is not supported by your browser or device.'));
+    onError?.(new GpsError('Geolocation is not supported by your browser or device.', 'UNKNOWN'), 'UNKNOWN');
     return () => {};
   }
 
@@ -305,7 +356,7 @@ export function watchLiveCoordinates(
   let hasReceivedFix = false;
 
   // Immediately notify with recent cached fix if available (zero-latency instant start)
-  const cached = getLastKnownCoordinates(60000);
+  const cached = getLastKnownCoordinates(120000);
   if (cached) {
     onUpdate(cached);
   }
@@ -322,20 +373,37 @@ export function watchLiveCoordinates(
   };
 
   const errorCallback: PositionErrorCallback = (err) => {
-    if (err.code === err.PERMISSION_DENIED) {
+    let code: GpsErrorCode = 'UNKNOWN';
+    if (err.code === 1) code = 'PERMISSION_DENIED';
+    else if (err.code === 2) code = 'POSITION_UNAVAILABLE';
+    else if (err.code === 3) code = 'TIMEOUT';
+
+    if (code === 'PERMISSION_DENIED') {
       onError?.(
-        new Error(
-          'Location permission was denied. Please allow location access in your browser settings.'
-        )
+        new GpsError(
+          'Location permission was denied. Please allow location access in your browser settings.',
+          'PERMISSION_DENIED'
+        ),
+        'PERMISSION_DENIED'
       );
-    } else if (!hasReceivedFix && err.code === err.POSITION_UNAVAILABLE) {
+    } else if (!hasReceivedFix && code === 'POSITION_UNAVAILABLE') {
       onError?.(
-        new Error(
-          'GPS signal unavailable. Please ensure location services are enabled on your device.'
-        )
+        new GpsError(
+          'GPS signal unavailable. Please ensure location services are enabled on your device.',
+          'POSITION_UNAVAILABLE'
+        ),
+        'POSITION_UNAVAILABLE'
+      );
+    } else if (!hasReceivedFix && code === 'TIMEOUT') {
+      onError?.(
+        new GpsError(
+          'GPS satellite connection timed out. Retrying satellite lock...',
+          'TIMEOUT'
+        ),
+        'TIMEOUT'
       );
     }
-    // Transient timeouts during continuous watch are ignored as the sensor continues polling
+    // Sensor continues polling in background for position updates
   };
 
   try {
@@ -345,7 +413,7 @@ export function watchLiveCoordinates(
       maximumAge: 2000,
     });
   } catch (e) {
-    onError?.(e instanceof Error ? e : new Error(String(e)));
+    onError?.(e instanceof Error ? e : new Error(String(e)), 'UNKNOWN');
   }
 
   return () => {

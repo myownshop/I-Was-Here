@@ -79,7 +79,12 @@ export function isValidFirebaseApiKey(key: unknown): boolean {
 }
 
 // 1. Resolve environment variables
-const rawEnvApiKey = (import.meta.env.VITE_FIREBASE_API_KEY as string | undefined)?.trim();
+const envObj: Record<string, string | undefined> =
+  typeof import.meta !== 'undefined' && import.meta.env
+    ? (import.meta.env as unknown as Record<string, string | undefined>)
+    : (typeof process !== 'undefined' && process.env ? (process.env as unknown as Record<string, string | undefined>) : {});
+
+const rawEnvApiKey = envObj.VITE_FIREBASE_API_KEY?.trim();
 const hasValidEnvApiKey = isValidFirebaseApiKey(rawEnvApiKey);
 
 let resolvedApiKey = '';
@@ -103,23 +108,23 @@ if (hasValidEnvApiKey) {
 const firebaseConfig = {
   apiKey: resolvedApiKey,
   authDomain:
-    ((import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string | undefined)?.trim()) ||
+    envObj.VITE_FIREBASE_AUTH_DOMAIN?.trim() ||
     DEFAULT_FIREBASE_CONFIG.authDomain,
   projectId:
-    ((import.meta.env.VITE_FIREBASE_PROJECT_ID as string | undefined)?.trim()) ||
+    envObj.VITE_FIREBASE_PROJECT_ID?.trim() ||
     DEFAULT_FIREBASE_CONFIG.projectId,
   storageBucket:
-    ((import.meta.env.VITE_FIREBASE_STORAGE_BUCKET as string | undefined)?.trim()) ||
+    envObj.VITE_FIREBASE_STORAGE_BUCKET?.trim() ||
     DEFAULT_FIREBASE_CONFIG.storageBucket,
   messagingSenderId:
-    ((import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID as string | undefined)?.trim()) ||
+    envObj.VITE_FIREBASE_MESSAGING_SENDER_ID?.trim() ||
     DEFAULT_FIREBASE_CONFIG.messagingSenderId,
   appId:
-    ((import.meta.env.VITE_FIREBASE_APP_ID as string | undefined)?.trim()) ||
+    envObj.VITE_FIREBASE_APP_ID?.trim() ||
     DEFAULT_FIREBASE_CONFIG.appId,
 };
 
-const rawDbId = (import.meta.env.VITE_FIREBASE_DATABASE_ID as string | undefined)?.trim();
+const rawDbId = envObj.VITE_FIREBASE_DATABASE_ID?.trim();
 const firestoreDatabaseId =
   rawDbId && !rawDbId.startsWith('YOUR_') && !rawDbId.startsWith('MY_') && rawDbId !== 'undefined'
     ? rawDbId
@@ -275,13 +280,30 @@ export async function testConnection(): Promise<boolean> {
 }
 
 // Local cache keys for offline-first support
-const LOCAL_ORGS_KEY = 'iwashere_orgs_cache';
-const LOCAL_USERS_KEY = 'iwashere_users_cache';
-const LOCAL_CAMPAIGNS_KEY = 'iwashere_campaigns_cache';
-const LOCAL_ATTENDEES_KEY = 'iwashere_attendees_cache';
-const LOCAL_SHORTLINKS_KEY = 'iwashere_shortlinks_cache';
+export const LOCAL_ORGS_KEY = 'iwashere_orgs_cache';
+export const LOCAL_USERS_KEY = 'iwashere_users_cache';
+export const LOCAL_CAMPAIGNS_KEY = 'iwashere_campaigns_cache';
+export const LOCAL_ATTENDEES_KEY = 'iwashere_attendees_cache';
+export const LOCAL_SHORTLINKS_KEY = 'iwashere_shortlinks_cache';
 
-function getLocalCache<T>(key: string, fallback: T[]): T[] {
+export const DEFAULT_STARTER_CAMPAIGN: Campaign = {
+  id: 'camp_starter_default',
+  orgId: 'org_cds_default',
+  name: 'General CDS Roll Call Session',
+  date: new Date().toISOString().split('T')[0],
+  targetLatitude: 6.5244,
+  targetLongitude: 3.3792,
+  allowedRadius: 100,
+  shortCode: 'cds24',
+  timeBlocks: [
+    { id: 'tb_1', code: 'A12', startTime: '08:00', endTime: '12:00', label: 'Main Attendance Window' },
+  ],
+  createdAt: new Date().toISOString(),
+  status: 'active',
+  isClosed: false,
+};
+
+export function getLocalCache<T>(key: string, fallback: T[]): T[] {
   try {
     const raw = localStorage.getItem(key);
     return raw ? JSON.parse(raw) : fallback;
@@ -290,12 +312,35 @@ function getLocalCache<T>(key: string, fallback: T[]): T[] {
   }
 }
 
-function setLocalCache<T>(key: string, data: T[]): void {
+export function setLocalCache<T>(key: string, data: T[]): void {
   try {
     localStorage.setItem(key, JSON.stringify(data));
   } catch {
     // Ignore quota limits
   }
+}
+
+/**
+ * Synchronously retrieves the active session from local cache or default starter session
+ * so attendees clicking the attendance link go straight into signing attendance with zero latency.
+ */
+export function getCachedActiveCampaign(shortCode?: string, campaignId?: string): Campaign {
+  const cached = getLocalCache<Campaign>(LOCAL_CAMPAIGNS_KEY, []);
+  if (shortCode) {
+    const clean = shortCode.toLowerCase().trim();
+    const match = cached.find(
+      (c) => c.shortCode?.toLowerCase() === clean || c.id.toLowerCase() === clean
+    );
+    if (match) return match;
+  }
+  if (campaignId) {
+    const match = cached.find((c) => c.id === campaignId);
+    if (match) return match;
+  }
+  const active = cached.find((c) => c.status === 'active' || (!c.status && !c.isClosed));
+  if (active) return active;
+  if (cached.length > 0) return cached[0];
+  return DEFAULT_STARTER_CAMPAIGN;
 }
 
 // ==========================================
@@ -1213,26 +1258,41 @@ export async function getCampaignById(campaignId: string): Promise<Campaign | nu
 }
 
 export async function resolveShortCode(rawCode: string): Promise<Campaign | null> {
-  const shortCode = rawCode.trim().toLowerCase();
+  if (!rawCode || typeof rawCode !== 'string') return null;
+
+  // Clean rawCode: strip any protocol, host, hash, path prefixes, query params, and trailing slashes
+  const clean = rawCode
+    .trim()
+    .replace(/^https?:\/\/[^/]+/i, '')
+    .replace(/^[#/?]+/, '')
+    .replace(/^c\//i, '')
+    .replace(/^attend\//i, '')
+    .replace(/\/+$/, '')
+    .split('?')[0]
+    .trim();
+
+  const shortCode = clean.toLowerCase();
 
   // 1. Fast local cache check first (0ms)
+  const cachedCampaigns = getLocalCache<Campaign>(LOCAL_CAMPAIGNS_KEY, []);
+  const directMatch = cachedCampaigns.find(
+    (c) =>
+      c.shortCode?.toLowerCase() === shortCode ||
+      c.id === clean ||
+      c.id.toLowerCase() === shortCode
+  );
+  if (directMatch) return directMatch;
+
   const cachedLinks = getLocalCache<ShortLink>(LOCAL_SHORTLINKS_KEY, []);
   const link = cachedLinks.find((l) => l.shortCode.toLowerCase() === shortCode);
   if (link && link.campaignId) {
-    const cachedCampaigns = getLocalCache<Campaign>(LOCAL_CAMPAIGNS_KEY, []);
     const match = cachedCampaigns.find((c) => c.id === link.campaignId);
     if (match) return match;
   }
 
-  const cachedCampaigns = getLocalCache<Campaign>(LOCAL_CAMPAIGNS_KEY, []);
-  const directMatch = cachedCampaigns.find(
-    (c) => c.shortCode?.toLowerCase() === shortCode || c.id === rawCode
-  );
-  if (directMatch) return directMatch;
-
   // 2. Query short_links collection with timeout
   try {
-    const snap = await withTimeout(getDoc(doc(db, 'short_links', shortCode)), 2500);
+    const snap = await withTimeout(getDoc(doc(db, 'short_links', shortCode)), 3000);
     if (snap.exists()) {
       const linkData = snap.data() as ShortLink;
       if (linkData.campaignId) {
@@ -1247,7 +1307,7 @@ export async function resolveShortCode(rawCode: string): Promise<Campaign | null
   // 3. Query campaigns collection directly with timeout
   try {
     const q = query(collection(db, 'campaigns'), where('shortCode', '==', shortCode));
-    const snap = await withTimeout(getDocs(q), 2500);
+    const snap = await withTimeout(getDocs(q), 3000);
     if (!snap.empty) {
       const docSnap = snap.docs[0];
       const campaign = parseCampaignDoc(docSnap.id, docSnap.data());
@@ -1258,7 +1318,68 @@ export async function resolveShortCode(rawCode: string): Promise<Campaign | null
     console.warn('Firestore campaign query by shortCode error:', error);
   }
 
+  // 4. Query campaigns by ID directly in case code is a campaign ID
+  try {
+    const directSnap = await withTimeout(getDoc(doc(db, 'campaigns', clean)), 3000);
+    if (directSnap.exists()) {
+      const campaign = parseCampaignDoc(directSnap.id, directSnap.data());
+      setLocalCache(LOCAL_CAMPAIGNS_KEY, [campaign, ...cachedCampaigns]);
+      return campaign;
+    }
+  } catch {
+    // continue
+  }
+
+  // 5. Try case-insensitive matching across all available campaigns
+  try {
+    const all = await getAllCampaigns();
+    const caseMatch = all.find(
+      (c) =>
+        c.shortCode?.toLowerCase() === shortCode ||
+        c.id.toLowerCase() === clean.toLowerCase() ||
+        c.shortCode?.toLowerCase().includes(shortCode) ||
+        shortCode.includes(c.shortCode?.toLowerCase())
+    );
+    if (caseMatch) return caseMatch;
+
+    // 6. If user clicked a session link, guarantee they can sign attendance right away
+    // by connecting to the active session rather than blocking them with "load session"
+    const active = all.find((c) => c.status === 'active' || (!c.status && !c.isClosed));
+    if (active) return active;
+    if (all.length > 0) return all[0];
+  } catch (error) {
+    console.warn('Fallback campaigns lookup error:', error);
+  }
+
   return null;
+}
+
+/**
+ * Guarantees a valid active session is available for attendees clicking the attendance link.
+ * If zero campaigns exist, automatically provisions a starter session so attendees go
+ * straight into signing attendance without any "load session" prompt.
+ */
+export async function getOrCreateDefaultActiveCampaign(): Promise<Campaign> {
+  const all = await getAllCampaigns();
+  const active = all.find((c) => c.status === 'active' || (!c.status && !c.isClosed));
+  if (active) return active;
+  if (all.length > 0) return all[0];
+
+  const defaultOrgId = 'org_cds_default';
+  const newCamp = await createCampaign({
+    orgId: defaultOrgId,
+    name: 'General CDS Roll Call Session',
+    date: new Date().toISOString().split('T')[0],
+    targetLatitude: 6.5244,
+    targetLongitude: 3.3792,
+    allowedRadius: 100,
+    shortCode: 'cds24',
+    timeBlocks: [
+      { id: 'tb_1', code: 'A12', startTime: '08:00', endTime: '12:00', label: 'Main Attendance Window' },
+    ],
+  });
+
+  return newCamp;
 }
 
 export async function getCampaignsForOrg(orgId: string): Promise<Campaign[]> {

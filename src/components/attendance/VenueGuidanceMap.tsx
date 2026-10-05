@@ -21,6 +21,7 @@ import {
   calculateBearing,
   formatDistance,
   getGoogleMapsNavigationUrl,
+  isCoordinatesValid,
 } from '../../utils/geo';
 
 interface VenueGuidanceMapProps {
@@ -55,8 +56,10 @@ export function VenueGuidanceMap({
   const [copied, setCopied] = useState(false);
   const [mapTheme, setMapTheme] = useState<'standard' | 'dark'>('standard');
 
-  const targetLat = Number(campaign.targetLatitude);
-  const targetLng = Number(campaign.targetLongitude);
+  const rawLat = Number(campaign.targetLatitude);
+  const rawLng = Number(campaign.targetLongitude);
+  const targetLat = isCoordinatesValid(rawLat, rawLng) ? rawLat : 6.5244;
+  const targetLng = isCoordinatesValid(rawLat, rawLng) ? rawLng : 3.3792;
   const allowedRadius = Number(campaign.allowedRadius) || 100;
 
   // Calculate bearing and compass heading if user coords available

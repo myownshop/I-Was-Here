@@ -64,8 +64,16 @@ export function EditCampaignModal({
       setDate(campaign.date);
       setStartTime(toDateTimeLocalInputString(campaign.startTime));
       setEndTime(toDateTimeLocalInputString(campaign.endTime));
-      setTargetLat(String(campaign.targetLatitude));
-      setTargetLng(String(campaign.targetLongitude));
+      setTargetLat(
+        campaign.targetLatitude && campaign.targetLatitude !== 0
+          ? String(campaign.targetLatitude)
+          : '6.5244'
+      );
+      setTargetLng(
+        campaign.targetLongitude && campaign.targetLongitude !== 0
+          ? String(campaign.targetLongitude)
+          : '3.3792'
+      );
       setAllowedRadius(campaign.allowedRadius || 100);
       setShortCode(campaign.shortCode);
       setStatus(campaign.status === 'closed' || campaign.isClosed ? 'closed' : 'active');

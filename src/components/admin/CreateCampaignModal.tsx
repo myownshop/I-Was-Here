@@ -33,10 +33,14 @@ export function CreateCampaignModal({
   const [name, setName] = useState<string>(defaultVenueTitle);
   const [date, setDate] = useState<string>(today);
   const [targetLat, setTargetLat] = useState<string>(
-    organization?.defaultLatitude !== undefined ? String(organization.defaultLatitude) : ''
+    organization?.defaultLatitude !== undefined && organization.defaultLatitude !== 0
+      ? String(organization.defaultLatitude)
+      : '6.5244'
   );
   const [targetLng, setTargetLng] = useState<string>(
-    organization?.defaultLongitude !== undefined ? String(organization.defaultLongitude) : ''
+    organization?.defaultLongitude !== undefined && organization.defaultLongitude !== 0
+      ? String(organization.defaultLongitude)
+      : '3.3792'
   );
   const [allowedRadius, setAllowedRadius] = useState<number>(organization?.defaultRadius || 100);
   const [shortCode, setShortCode] = useState<string>(generateShortCode());

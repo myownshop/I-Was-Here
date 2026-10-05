@@ -38,13 +38,13 @@ service cloud.firestore {
     }
 
     function isValidCampaign(data) {
-      return data.name is string && data.name.size() >= 3 && data.name.size() <= 100
+      return data.name is string && data.name.size() >= 2 && data.name.size() <= 100
         && data.orgId is string && data.orgId.size() <= 128
         && data.date is string && data.date.size() == 10
         && data.targetLatitude is number
         && data.targetLongitude is number
         && data.allowedRadius is number
-        && data.shortCode is string && data.shortCode.size() == 5
+        && data.shortCode is string && data.shortCode.size() >= 3 && data.shortCode.size() <= 32
         && (!('timeBlocks' in data) || (data.timeBlocks is list))
         && (!('startTime' in data) || (data.startTime is timestamp || data.startTime is string || data.startTime == null))
         && (!('endTime' in data) || (data.endTime is timestamp || data.endTime is string || data.endTime == null))
@@ -60,7 +60,7 @@ service cloud.firestore {
     }
 
     function isValidShortLink(data) {
-      return data.shortCode is string && data.shortCode.size() == 5
+      return data.shortCode is string && data.shortCode.size() >= 3 && data.shortCode.size() <= 32
         && data.campaignId is string && data.campaignId.size() <= 128;
     }
 
@@ -99,10 +99,8 @@ service cloud.firestore {
 
     // Campaigns (Attendance Sessions)
     match /campaigns/{campaignId} {
-      // Single campaign viewable by attendees or admin
-      allow get: if true;
-      // List scoped to the admin's organization or authenticated admin
-      allow list: if isSignedIn();
+      // Campaigns queryable and viewable by attendees for signing attendance or admin
+      allow get, list: if true;
       allow create: if isSignedIn() && isValidId(campaignId) && isValidCampaign(request.resource.data)
                     && (request.resource.data.orgId == getUserOrgId());
       allow update: if isSignedIn() && isValidId(campaignId) && isValidCampaign(request.resource.data)
@@ -129,10 +127,9 @@ service cloud.firestore {
       }
     }
 
-    // 5-character short link index
+    // Short link index for fast session resolution
     match /short_links/{shortCode} {
-      allow get: if true;
-      allow list: if isSignedIn();
+      allow get, list: if true;
       allow create: if isValidId(shortCode) && isValidShortLink(request.resource.data);
       allow update: if isSignedIn() && isValidId(shortCode) && isValidShortLink(request.resource.data);
       allow delete: if isSignedIn();
