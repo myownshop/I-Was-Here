@@ -52,7 +52,7 @@ export function OfflineSyncStatus({ accentColor = '#00FF66', className = '' }: O
 
   const handleManualSync = async () => {
     if (!isNavigatorOnline()) {
-      showToast('warning', 'Device is offline. Connect to the internet to sync with Firebase.', 'Offline');
+      showToast('warning', 'You are currently offline. Please connect to the internet to sync.', 'Offline');
       return;
     }
 
@@ -66,19 +66,19 @@ export function OfflineSyncStatus({ accentColor = '#00FF66', className = '' }: O
       if (report.syncedCount > 0) {
         showToast(
           'success',
-          `Synced ${report.syncedCount} offline record${report.syncedCount > 1 ? 's' : ''} to Firebase.`,
-          'Cloud Sync Complete'
+          `Synced ${report.syncedCount} offline record${report.syncedCount > 1 ? 's' : ''} to the cloud.`,
+          'Sync Complete'
         );
       } else if (report.failedCount > 0) {
         showToast(
           'error',
-          `Failed to sync ${report.failedCount} record${report.failedCount > 1 ? 's' : ''}. Check database connection.`,
-          'Sync Issues'
+          `Could not sync ${report.failedCount} record${report.failedCount > 1 ? 's' : ''}. Please try again shortly.`,
+          'Sync Issue'
         );
       }
     } catch (err) {
       console.error('Manual sync failed:', err);
-      showToast('error', 'Sync encountered an unexpected error.', 'Sync Error');
+      showToast('error', 'Something went wrong while syncing. Please try again.', 'Sync Error');
     } finally {
       setIsSyncing(false);
     }

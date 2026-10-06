@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   Shield,
   Building2,
@@ -19,7 +19,15 @@ import {
   QrCode,
   Tag,
 } from 'lucide-react';
-import { signUpAdmin, signInAdmin, signInWithGoogle, getReadableFirebaseError, getFirebaseConfigStatus } from '../../services/firebase';
+import {
+  signUpAdmin,
+  signInAdmin,
+  signInWithGoogle,
+  signInWithGoogleRedirect,
+  checkGoogleRedirectResult,
+  getReadableFirebaseError,
+  getFirebaseConfigStatus,
+} from '../../services/firebase';
 import { Organization, UserProfile } from '../../types/attendance';
 import { useToast } from '../common/Toast';
 
@@ -172,6 +180,7 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend, onNavigateToHome }
   const [tab, setTab] = useState<'signin' | 'signup'>('signin');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isPopupBlocked, setIsPopupBlocked] = useState<boolean>(false);
 
   // Sign in fields
   const [signInIdentifier, setSignInIdentifier] = useState('');
@@ -289,12 +298,12 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend, onNavigateToHome }
       };
 
       const res = await signUpAdmin(adminName, email, password, orgName, accentColor, extraFields);
-      showToast('success', `Welcome! Organization "${res.org.name}" has been registered.`);
+      showToast('success', `Welcome! Your organization "${res.org.name}" is ready.`, 'Welcome');
       onAuthSuccess(res.org, res.profile, true);
     } catch (err: unknown) {
       const msg = getReadableFirebaseError(err);
       setError(msg);
-      showToast('error', msg, 'Sign Up Failed');
+      showToast('error', msg, 'Could not create account');
     } finally {
       setLoading(false);
     }
@@ -314,9 +323,9 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend, onNavigateToHome }
       const res = await signInAdmin(signInIdentifier.trim(), signInPassword);
       if (res.org) {
         if (res.profile?.role === 'superuser') {
-          showToast('success', 'Logged in with Super User privileges. Access to all organizations granted.');
+          showToast('success', 'Logged in as Super User with full access.', 'Welcome, Super User');
         } else {
-          showToast('success', `Signed in as admin for ${res.org.name}`);
+          showToast('success', `Welcome back to ${res.org.name}!`, 'Signed In');
         }
         onAuthSuccess(res.org, res.profile || undefined, false);
       } else {
@@ -325,29 +334,87 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend, onNavigateToHome }
     } catch (err: unknown) {
       const msg = getReadableFirebaseError(err);
       setError(msg);
-      showToast('error', msg, 'Sign In Failed');
+      showToast('error', msg, 'Sign In');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleGoogleSignIn = async () => {
-    setError(null);
-    try {
-      setLoading(true);
-      const res = await signInWithGoogle();
-      if (res.org) {
-        showToast('success', `Authenticated as ${res.org.adminName}`);
+  // Check redirect result on mount (for mobile / popup-blocked redirect flows)
+  useEffect(() => {
+    let isMounted = true;
+    checkGoogleRedirectResult()
+      .then((res) => {
+        if (!isMounted || !res || !res.org) return;
+        showToast('success', `Welcome back, ${res.org.adminName || 'Coordinator'}!`, 'Signed In');
         const hasEnteredBefore =
           typeof window !== 'undefined' &&
           localStorage.getItem(`iwh_has_entered_portal_${res.org.id}`) === 'true';
         const isNew = !hasEnteredBefore && !res.org.stateLga && !res.org.cdsBatch;
-        onAuthSuccess(res.org, undefined, isNew);
+        onAuthSuccess(res.org, res.profile || undefined, isNew);
+      })
+      .catch((err) => {
+        console.warn('Google redirect sign-in notice:', err);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [onAuthSuccess]);
+
+  const getCustomOrgData = useCallback(() => {
+    if (tab !== 'signup') return undefined;
+    return {
+      orgName: orgName.trim() || undefined,
+      organizationCategory: organizationCategory.trim() || categorySearch.trim() || undefined,
+      organizationType: organizationCategory.trim() || categorySearch.trim() || 'General',
+      userLabel: selectedPreset?.userLabel,
+      idLabel: selectedPreset?.idLabel,
+      sessionLabel: selectedPreset?.sessionLabel,
+      accentColor: accentColor || '#00FF66',
+    };
+  }, [tab, orgName, organizationCategory, categorySearch, selectedPreset, accentColor]);
+
+  const handleGoogleSignIn = async () => {
+    setError(null);
+    setIsPopupBlocked(false);
+    try {
+      setLoading(true);
+      const customOrgFields = getCustomOrgData();
+      const res = await signInWithGoogle(customOrgFields);
+      if (res.org) {
+        showToast('success', `Welcome, ${res.org.adminName || 'Coordinator'}!`, 'Signed In');
+        const hasEnteredBefore =
+          typeof window !== 'undefined' &&
+          localStorage.getItem(`iwh_has_entered_portal_${res.org.id}`) === 'true';
+        const isNew = !hasEnteredBefore && !res.org.stateLga && !res.org.cdsBatch;
+        onAuthSuccess(res.org, res.profile || undefined, isNew);
       }
     } catch (err: unknown) {
       const msg = getReadableFirebaseError(err);
+      if (
+        msg.includes('blocked') ||
+        (err instanceof Error && err.message.includes('popup-blocked'))
+      ) {
+        setIsPopupBlocked(true);
+      }
       setError(msg);
-      showToast('error', msg, 'Google Sign In Failed');
+      showToast('error', msg, 'Google Sign-In');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleSignInRedirect = async () => {
+    setError(null);
+    setIsPopupBlocked(false);
+    try {
+      setLoading(true);
+      const customOrgFields = getCustomOrgData();
+      await signInWithGoogleRedirect(customOrgFields);
+    } catch (err: unknown) {
+      const msg = getReadableFirebaseError(err);
+      setError(msg);
+      showToast('error', msg, 'Google Sign-In');
     } finally {
       setLoading(false);
     }
@@ -529,7 +596,7 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend, onNavigateToHome }
               type="button"
               onClick={handleGoogleSignIn}
               disabled={loading}
-              className="w-full py-2.5 rounded-xl font-semibold text-xs text-white bg-[#182133] hover:bg-[#202c44] border border-[#2a3752] flex items-center justify-center gap-2 transition-all cursor-pointer"
+              className="w-full py-2.5 rounded-xl font-semibold text-xs text-white bg-[#182133] hover:bg-[#202c44] border border-[#2a3752] flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm hover:brightness-105 active:scale-[0.99]"
             >
               <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
                 <path
@@ -551,6 +618,44 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend, onNavigateToHome }
               </svg>
               <span>Continue with Google</span>
             </button>
+
+            {/* Popup allowance reminder */}
+            <p className="text-[11px] text-slate-400 text-center">
+              💡 <span>If the Google window doesn't open, please allow popups in your browser address bar or use full-page sign in.</span>
+            </p>
+
+            {isPopupBlocked && (
+              <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs space-y-2.5 text-left animate-in fade-in duration-200">
+                <div className="flex items-center gap-1.5 font-bold text-amber-300">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" />
+                  <span>Popups are blocked by your browser</span>
+                </div>
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  Your browser stopped the Google sign-in window from opening. You can allow popups, or sign in directly using full page mode.
+                </p>
+                <div className="bg-black/30 p-2 rounded-lg text-[11px] text-slate-400 space-y-1">
+                  <p className="font-semibold text-slate-300">How to allow popups in 2 taps:</p>
+                  <p>1. Look at your browser address bar and tap the popup icon <span className="font-mono text-amber-300">[ ⧉ ]</span> or site settings.</p>
+                  <p>2. Select <strong>"Always allow popups"</strong>.</p>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleGoogleSignIn}
+                    className="flex-1 py-2 px-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-bold text-xs transition-colors cursor-pointer text-center"
+                  >
+                    Allow Popups &amp; Try Again
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleGoogleSignInRedirect}
+                    className="flex-1 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs border border-slate-600 transition-colors cursor-pointer text-center"
+                  >
+                    Full Page Sign-In (No Popups)
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div className="pt-2 text-center">
               <button
@@ -856,6 +961,79 @@ export function AuthPage({ onAuthSuccess, onNavigateToAttend, onNavigateToHome }
                 </>
               )}
             </button>
+
+            <div className="relative flex items-center justify-center my-3">
+              <div className="border-t border-[#1e2638] w-full" />
+              <span className="bg-[#10151f] px-2 text-[10px] uppercase font-bold text-slate-500 shrink-0">
+                Or Register With Google
+              </span>
+            </div>
+
+            <button
+              id="btn-google-signup"
+              type="button"
+              onClick={handleGoogleSignIn}
+              disabled={loading}
+              className="w-full py-2.5 rounded-xl font-semibold text-xs text-white bg-[#182133] hover:bg-[#202c44] border border-[#2a3752] flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm hover:brightness-105 active:scale-[0.99]"
+            >
+              <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                <path
+                  fill="#4285F4"
+                  d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.66v3.05h3.87c2.26-2.09 3.67-5.17 3.67-9.15z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.87-3.05c-1.08.72-2.45 1.16-4.06 1.16-3.13 0-5.78-2.11-6.73-4.96H1.28v3.15C3.26 21.36 7.34 24 12 24z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M5.27 14.24c-.25-.72-.38-1.49-.38-2.24s.13-1.52.38-2.24V6.61H1.28C.46 8.23 0 10.06 0 12s.46 3.77 1.28 5.39l3.99-3.15z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.64 1.28 6.61l3.99 3.15c.95-2.85 3.6-4.96 6.73-4.96z"
+                />
+              </svg>
+              <span>Continue with Google</span>
+            </button>
+
+            {/* Popup allowance reminder */}
+            <p className="text-[11px] text-slate-400 text-center">
+              💡 <span>If the Google window doesn't open, please allow popups in your browser address bar or use full-page sign in.</span>
+            </p>
+
+            {isPopupBlocked && (
+              <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs space-y-2.5 text-left animate-in fade-in duration-200">
+                <div className="flex items-center gap-1.5 font-bold text-amber-300">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" />
+                  <span>Popups are blocked by your browser</span>
+                </div>
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  Your browser stopped the Google sign-in window from opening. You can allow popups, or create your account directly using full page mode.
+                </p>
+                <div className="bg-black/30 p-2 rounded-lg text-[11px] text-slate-400 space-y-1">
+                  <p className="font-semibold text-slate-300">How to allow popups in 2 taps:</p>
+                  <p>1. Look at your browser address bar and tap the popup icon <span className="font-mono text-amber-300">[ ⧉ ]</span> or site settings.</p>
+                  <p>2. Select <strong>"Always allow popups"</strong>.</p>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleGoogleSignIn}
+                    className="flex-1 py-2 px-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-bold text-xs transition-colors cursor-pointer text-center"
+                  >
+                    Allow Popups &amp; Try Again
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleGoogleSignInRedirect}
+                    className="flex-1 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs border border-slate-600 transition-colors cursor-pointer text-center"
+                  >
+                    Full Page Sign-In (No Popups)
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div className="pt-1 text-center">
               <button

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Navigation, MapPin, Calendar, Sparkles, Loader2, PlusCircle, Clock } from 'lucide-react';
+import { X, Navigation, MapPin, Calendar, Sparkles, Loader2, PlusCircle, Clock, CheckCircle2 } from 'lucide-react';
 import { Campaign, Organization, TimeBlock } from '../../types/attendance';
 import { FloatingInput } from '../common/FloatingInput';
 import { GoogleMapsLinkInput } from '../common/GoogleMapsLinkInput';
@@ -57,6 +57,8 @@ export function CreateCampaignModal({
 
   const [locating, setLocating] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
+  const [usedGpsLocation, setUsedGpsLocation] = useState<boolean>(false);
+  const [gpsSuccessMessage, setGpsSuccessMessage] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -87,14 +89,19 @@ export function CreateCampaignModal({
   // Use Current GPS coordinates
   const handleUseCurrentLocation = async () => {
     setLocating(true);
+    setGpsSuccessMessage(null);
     try {
-      const coords = await getCurrentCoordinates();
+      const coords = await getCurrentCoordinates({ enableHighAccuracy: true });
       setTargetLat(coords.latitude.toFixed(6));
       setTargetLng(coords.longitude.toFixed(6));
-      showToast('success', `GPS coordinates locked: ${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`, 'Location Acquired');
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Unable to acquire current location.';
-      showToast('error', msg, 'GPS Error');
+      setUsedGpsLocation(true);
+      setGpsSuccessMessage(
+        `Current GPS location captured successfully! Coordinates: ${coords.latitude.toFixed(5)}, ${coords.longitude.toFixed(5)} (±${Math.round(coords.accuracy)}m accuracy).`
+      );
+      showToast('success', 'Your current location was captured successfully!', 'Location Saved');
+    } catch {
+      setUsedGpsLocation(false);
+      showToast('error', 'Could not detect your current location. Please turn on GPS and try again.', 'Location Error');
     } finally {
       setLocating(false);
     }
@@ -103,13 +110,14 @@ export function CreateCampaignModal({
   const handleGoogleMapsParsed = (coords: { latitude: number; longitude: number; venueName?: string }) => {
     setTargetLat(coords.latitude.toFixed(6));
     setTargetLng(coords.longitude.toFixed(6));
+    setGpsSuccessMessage(null);
     if (coords.venueName && (!name || name === defaultVenueTitle)) {
       setName(coords.venueName);
     }
     showToast(
       'success',
-      `Venue coordinates set to (${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)})`,
-      'Google Maps Venue Applied'
+      `Meeting location set to (${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)})`,
+      'Location Updated'
     );
   };
 
@@ -117,7 +125,7 @@ export function CreateCampaignModal({
     e.preventDefault();
 
     if (!name.trim()) {
-      showToast('warning', 'Please enter a campaign name (e.g. SDGs CDS Weekly Plenary).', 'Name Required');
+      showToast('warning', 'Please enter a name for this session.', 'Name Needed');
       return;
     }
 
@@ -125,12 +133,12 @@ export function CreateCampaignModal({
     const lng = parseFloat(targetLng);
 
     if (isNaN(lat) || lat < -90 || lat > 90) {
-      showToast('error', 'Latitude must be a valid number between -90 and 90.', 'Invalid Latitude');
+      showToast('error', 'Please enter a valid latitude for the meeting place.', 'Check Coordinates');
       return;
     }
 
     if (isNaN(lng) || lng < -180 || lng > 180) {
-      showToast('error', 'Longitude must be a valid number between -180 and 180.', 'Invalid Longitude');
+      showToast('error', 'Please enter a valid longitude for the meeting place.', 'Check Coordinates');
       return;
     }
 
@@ -138,11 +146,11 @@ export function CreateCampaignModal({
       const sDate = new Date(startTime);
       const eDate = new Date(endTime);
       if (isNaN(sDate.getTime()) || isNaN(eDate.getTime())) {
-        showToast('error', 'Please provide valid start and end times.', 'Invalid Times');
+        showToast('error', 'Please choose valid start and end times.', 'Times Needed');
         return;
       }
       if (sDate >= eDate) {
-        showToast('error', 'Session End Time must be later than Start Time.', 'Schedule Invalid');
+        showToast('error', 'The end time needs to be after the start time.', 'Check Times');
         return;
       }
     }
@@ -162,12 +170,16 @@ export function CreateCampaignModal({
         endTime: endTime ? endTime : undefined,
       });
 
-      showToast('success', `Created session: ${created.name} (${created.shortCode})`, 'Campaign Live');
+      if (usedGpsLocation) {
+        showToast('success', `Attendance session "${created.name}" created successfully using your GPS location!`, 'Session Created');
+      } else {
+        showToast('success', `Attendance session "${created.name}" created successfully!`, 'Session Created');
+      }
       onCampaignCreated(created);
       onClose();
     } catch (err) {
       console.error('Create campaign error:', err);
-      showToast('error', 'Failed to save campaign. Please check connection.', 'Save Error');
+      showToast('error', 'Could not save this session. Please check your connection and try again.', 'Save Error');
     } finally {
       setSaving(false);
     }
@@ -288,7 +300,7 @@ export function CreateCampaignModal({
                 type="button"
                 onClick={handleUseCurrentLocation}
                 disabled={locating}
-                className="px-2.5 py-1 rounded-lg bg-[#00FF66]/10 hover:bg-[#00FF66]/20 border border-[#00FF66]/30 text-[#00FF66] text-xs font-semibold flex items-center space-x-1 transition-all"
+                className="px-2.5 py-1 rounded-lg bg-[#00FF66]/10 hover:bg-[#00FF66]/20 border border-[#00FF66]/30 text-[#00FF66] text-xs font-semibold flex items-center space-x-1 transition-all cursor-pointer"
               >
                 {locating ? (
                   <Loader2 className="w-3 h-3 animate-spin" />
@@ -298,6 +310,21 @@ export function CreateCampaignModal({
                 <span>Use My GPS</span>
               </button>
             </div>
+
+            {gpsSuccessMessage && (
+              <div className="p-3.5 rounded-2xl bg-[#00FF66]/10 border border-[#00FF66]/35 text-[#00FF66] text-xs space-y-1.5 animate-in fade-in duration-200">
+                <div className="flex items-center space-x-2 font-bold">
+                  <CheckCircle2 className="w-4 h-4 shrink-0 text-[#00FF66]" />
+                  <span>GPS Location Successfully Captured!</span>
+                </div>
+                <p className="text-[11px] text-emerald-200 pl-6 leading-relaxed">
+                  {gpsSuccessMessage}
+                </p>
+                <p className="text-[10px] text-slate-400 pl-6">
+                  Members will verify that they are physically at this location when signing attendance.
+                </p>
+              </div>
+            )}
 
             {/* Paste Google Maps Link tool */}
             <div className="p-3 bg-[#101622] rounded-xl border border-[#202c3e]">

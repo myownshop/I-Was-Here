@@ -44,9 +44,9 @@ export function OfflineDataImporter({
         organizationName: organization?.name,
         accentColor,
       });
-      showToast('success', `Saved standalone zero-network file: ${filename}`);
+      showToast('success', `Saved offline sign-in file: ${filename}`, 'File Saved');
     } catch {
-      showToast('error', 'Failed to generate standalone HTML file.');
+      showToast('error', 'Could not create offline sign-in file. Please try again.', 'Download Error');
     }
   };
 
@@ -104,18 +104,18 @@ export function OfflineDataImporter({
     setIsProcessing(false);
 
     if (outsideWindowCount > 0) {
-      showToast('error', `⛔ Rejected ${outsideWindowCount} record(s): Outside Allowed Window!`);
+      showToast('warning', `${outsideWindowCount} record${outsideWindowCount > 1 ? 's were' : ' was'} submitted outside the scheduled meeting hours.`, 'Time Window Notice');
     }
 
     if (tamperedCount > 0) {
-      showToast('error', `⚠️ Flagged ${tamperedCount} record(s) with OS clock tampering!`);
+      showToast('warning', `${tamperedCount} record${tamperedCount > 1 ? 's have' : ' has'} an incorrect device clock.`, 'Time Check Notice');
     }
 
     if (successCount > 0) {
-      showToast('success', `Imported ${successCount} verified offline attendance record(s).`);
+      showToast('success', `Imported ${successCount} offline attendance record${successCount > 1 ? 's' : ''} successfully.`, 'Import Complete');
       onRecordsImported();
     } else if (results.some((r) => r.status === 'error')) {
-      showToast('error', 'One or more .iwh files failed verification or were rejected.');
+      showToast('error', 'Some attendance files could not be imported. Please verify the files and try again.', 'Import Failed');
     }
   };
 

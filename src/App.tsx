@@ -179,8 +179,8 @@ export default function App() {
         if (report.syncedCount > 0) {
           showToast(
             'success',
-            `Reconnected! Synchronized ${report.syncedCount} queued attendance record${report.syncedCount > 1 ? 's' : ''} to Firebase.`,
-            'PWA Cloud Sync'
+            `Back online! Synced ${report.syncedCount} offline attendance record${report.syncedCount > 1 ? 's' : ''} to the cloud.`,
+            'Sync Complete'
           );
         }
       },
@@ -287,10 +287,10 @@ export default function App() {
     try {
       await signOutAdmin();
       setCurrentUserProfile(null);
-      showToast('info', 'Signed out of organization portal.', 'Signed Out');
+      showToast('info', 'You have been signed out successfully.', 'Signed Out');
       handleViewChange('home');
     } catch {
-      showToast('error', 'Error signing out.', 'Error');
+      showToast('error', 'Could not sign out. Please try again.', 'Sign Out');
     }
   };
 

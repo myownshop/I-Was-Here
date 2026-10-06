@@ -4,6 +4,8 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   GoogleAuthProvider,
   signOut,
   onAuthStateChanged,
@@ -141,46 +143,56 @@ export function getFirebaseConfigStatus(): FirebaseConfigStatus {
 }
 
 export function getReadableFirebaseError(error: unknown): string {
-  if (!error) return 'An unexpected authentication error occurred.';
+  if (!error) return 'An unexpected error occurred. Please try again.';
   const message = error instanceof Error ? error.message : String(error);
 
+  if (
+    message.includes('auth/popup-blocked') ||
+    message.includes('popup-blocked') ||
+    message.includes('blocked by the browser')
+  ) {
+    return 'Your browser blocked the sign-in window. Please allow popups for this site in your browser address bar and try again.';
+  }
+  if (message.includes('auth/popup-closed-by-user')) {
+    return 'Sign-in was closed before finishing. Tap Continue with Google to try again.';
+  }
+  if (message.includes('auth/cancelled-popup-request')) {
+    return 'A sign-in window was already open. Please tap Continue with Google again.';
+  }
   if (
     message.includes('auth/api-key-not-valid') ||
     message.includes('auth/invalid-api-key') ||
     message.includes('API_KEY_INVALID') ||
     message.includes('API key not valid')
   ) {
-    return 'Invalid Firebase API Key. Please verify that VITE_FIREBASE_API_KEY in your environment configuration is active and has the Identity Toolkit API enabled.';
+    return 'Sign-in service is currently unavailable. Please verify your connection or contact support.';
   }
   if (message.includes('auth/operation-not-allowed')) {
-    return 'Email/Password sign-in is not enabled in Firebase Console. Please enable "Email/Password" under Firebase Console -> Authentication -> Sign-in method, or sign in using Google.';
+    return 'Sign-in method is not enabled. Please sign in using Google or contact your administrator.';
   }
   if (message.includes('auth/email-already-in-use')) {
     return 'An account with this email address already exists. Please sign in instead.';
   }
   if (message.includes('auth/invalid-credential') || message.includes('auth/wrong-password')) {
-    return 'Incorrect email or password. Please verify your credentials and try again.';
+    return 'Incorrect email or password. Please double-check and try again.';
   }
   if (message.includes('auth/user-not-found')) {
-    return 'No user account found with this email. Please register your organization first.';
-  }
-  if (message.includes('auth/popup-closed-by-user')) {
-    return 'Sign-in cancelled: The Google popup was closed before completing.';
+    return 'No account was found with this email. Please create an account first.';
   }
   if (message.includes('auth/unauthorized-domain')) {
-    return 'This domain is not authorized in Firebase Console. Please add it under Authentication -> Settings -> Authorized domains.';
+    return 'This web address is not authorized for sign-in yet. Please contact support.';
   }
   if (message.includes('auth/network-request-failed')) {
-    return 'Network connection failed while contacting Firebase. Please check your internet connection.';
+    return 'Network connection problem. Please check your internet connection and try again.';
   }
   if (message.includes('auth/too-many-requests')) {
-    return 'Access temporarily blocked due to too many failed attempts. Please try again later.';
+    return 'Too many failed attempts. Please wait a few moments and try again.';
   }
   if (message.includes('auth/weak-password')) {
-    return 'Password is too weak. Please use at least 6 characters.';
+    return 'Password is too short. Please use at least 6 characters.';
   }
   if (message.includes('auth/invalid-email')) {
-    return 'Invalid email address format. Please enter a valid email address.';
+    return 'Please enter a valid email address.';
   }
 
   const cleaned = message.replace(/^Firebase:\s*(?:Error\s*)?(?:\([^)]+\)\.?\s*)?/i, '').trim();
@@ -227,6 +239,9 @@ export const db = firestoreDb;
 export const auth = getAuth(app);
 export const storage = getStorage(app);
 export const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({
+  prompt: 'select_account',
+});
 
 // Operational Error Handling conforming to Firebase Skill guidelines
 export enum OperationType {
@@ -808,36 +823,52 @@ export async function signInAdmin(
   return { user: cred.user, org, profile };
 }
 
-export async function signInWithGoogle(): Promise<{
-  user: User;
-  org: Organization | null;
-  profile: UserProfile | null;
-}> {
-  const config = getFirebaseConfigStatus();
-  if (!config.hasValidApiKey) {
-    throw new Error('Firebase is not configured with a valid API key. Please check VITE_FIREBASE_API_KEY in your environment configuration.');
+async function processGoogleAuthCredential(
+  user: User,
+  customOrgFields?: {
+    orgName?: string;
+    organizationCategory?: string;
+    organizationType?: string;
+    userLabel?: string;
+    idLabel?: string;
+    sessionLabel?: string;
+    accentColor?: string;
+    stateLga?: string;
+    cdsBatch?: string;
+    meetingSchedule?: string;
   }
-
-  const cred = await signInWithPopup(auth, googleProvider);
-  let profile = await getUserProfile(cred.user.uid);
+): Promise<{ user: User; org: Organization | null; profile: UserProfile | null }> {
+  let profile = await getUserProfile(user.uid);
   let org: Organization | null = null;
 
   if (profile) {
     org = await getOrganization(profile.orgId);
   } else {
-    // Onboard new Google admin with their organization
-    const orgTitle = `${cred.user.displayName || 'Corps'}'s Organization`;
+    // Onboard new Google coordinator with their organization
+    const orgTitle =
+      customOrgFields?.orgName?.trim() || `${user.displayName || 'Coordinator'}'s Organization`;
+    const accentColor = customOrgFields?.accentColor || '#00FF66';
     org = await createOrganization(
       orgTitle,
-      cred.user.uid,
-      cred.user.email || '',
-      cred.user.displayName || 'Admin Officer',
-      '#00FF66'
+      user.uid,
+      user.email || '',
+      user.displayName || 'Coordinator',
+      accentColor,
+      {
+        organizationCategory: customOrgFields?.organizationCategory,
+        organizationType: customOrgFields?.organizationType,
+        userLabel: customOrgFields?.userLabel,
+        idLabel: customOrgFields?.idLabel,
+        sessionLabel: customOrgFields?.sessionLabel,
+        stateLga: customOrgFields?.stateLga,
+        cdsBatch: customOrgFields?.cdsBatch,
+        meetingSchedule: customOrgFields?.meetingSchedule,
+      }
     );
     profile = {
-      uid: cred.user.uid,
-      email: cred.user.email || '',
-      name: cred.user.displayName || 'Admin Officer',
+      uid: user.uid,
+      email: user.email || '',
+      name: user.displayName || 'Coordinator',
       orgId: org.id,
       role: 'admin',
       createdAt: new Date().toISOString(),
@@ -845,7 +876,87 @@ export async function signInWithGoogle(): Promise<{
     await saveUserProfile(profile);
   }
 
-  return { user: cred.user, org, profile };
+  if (!org && profile?.orgId) {
+    org = await getOrganization(profile.orgId);
+  }
+
+  return { user, org, profile };
+}
+
+export async function signInWithGoogle(customOrgFields?: {
+  orgName?: string;
+  organizationCategory?: string;
+  organizationType?: string;
+  userLabel?: string;
+  idLabel?: string;
+  sessionLabel?: string;
+  accentColor?: string;
+  stateLga?: string;
+  cdsBatch?: string;
+  meetingSchedule?: string;
+}): Promise<{
+  user: User;
+  org: Organization | null;
+  profile: UserProfile | null;
+}> {
+  const config = getFirebaseConfigStatus();
+  if (!config.hasValidApiKey) {
+    throw new Error('Sign-in service is currently not configured.');
+  }
+
+  const cred = await signInWithPopup(auth, googleProvider);
+  return processGoogleAuthCredential(cred.user, customOrgFields);
+}
+
+export async function signInWithGoogleRedirect(customOrgFields?: {
+  orgName?: string;
+  organizationCategory?: string;
+  organizationType?: string;
+  userLabel?: string;
+  idLabel?: string;
+  sessionLabel?: string;
+  accentColor?: string;
+  stateLga?: string;
+  cdsBatch?: string;
+  meetingSchedule?: string;
+}): Promise<void> {
+  const config = getFirebaseConfigStatus();
+  if (!config.hasValidApiKey) {
+    throw new Error('Sign-in service is currently not configured.');
+  }
+  if (customOrgFields) {
+    try {
+      localStorage.setItem('iwh_pending_google_org_data', JSON.stringify(customOrgFields));
+    } catch {
+      // ignore
+    }
+  }
+  await signInWithRedirect(auth, googleProvider);
+}
+
+export async function checkGoogleRedirectResult(): Promise<{
+  user: User;
+  org: Organization | null;
+  profile: UserProfile | null;
+} | null> {
+  try {
+    const cred = await getRedirectResult(auth);
+    if (!cred || !cred.user) return null;
+    let customOrgFields: any = undefined;
+    try {
+      const stored = localStorage.getItem('iwh_pending_google_org_data');
+      if (stored) {
+        customOrgFields = JSON.parse(stored);
+        localStorage.removeItem('iwh_pending_google_org_data');
+      }
+    } catch {
+      // ignore
+    }
+    return processGoogleAuthCredential(cred.user, customOrgFields);
+  } catch (err) {
+    console.warn('checkGoogleRedirectResult notice:', err);
+    return null;
+  }
 }
 
 export async function signOutAdmin(): Promise<void> {

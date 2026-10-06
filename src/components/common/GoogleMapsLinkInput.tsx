@@ -69,22 +69,22 @@ export function GoogleMapsLinkInput({
 
         showToast(
           'success',
-          `Coordinates locked: ${result.latitude.toFixed(4)}, ${result.longitude.toFixed(4)}${
+          `Location set: ${result.latitude.toFixed(4)}, ${result.longitude.toFixed(4)}${
             result.venueName ? ` (${result.venueName})` : ''
           }`,
-          'Location Extracted'
+          'Location Found'
         );
       } else if (result.error) {
-        showToast('error', result.error, 'Location Parse Error');
+        showToast('error', 'Could not read location coordinates from that link. Please check the link or use GPS.', 'Invalid Link');
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to resolve location link.';
+      const msg = err instanceof Error ? err.message : 'Could not resolve location link.';
       setParseResult({
         success: false,
         error: msg,
         originalInput: trimmed,
       });
-      showToast('error', msg, 'Link Resolution Error');
+      showToast('error', 'Could not open that map link. Please check your internet connection or use GPS.', 'Link Error');
     } finally {
       setIsResolving(false);
     }
@@ -100,7 +100,7 @@ export function GoogleMapsLinkInput({
         }
       }
     } catch {
-      showToast('info', 'Please paste the link into the box manually.', 'Clipboard Notice');
+      showToast('info', 'Please paste the link into the box directly.', 'Paste Link');
     }
   };
 
@@ -122,10 +122,10 @@ export function GoogleMapsLinkInput({
         sourceType: 'coordinates',
         originalInput: `${lat}, ${lng}`,
       });
-      showToast('success', `Live GPS coordinates locked: ${lat}, ${lng} (±${Math.round(coords.accuracy)}m)`, 'Device Location Locked');
+      showToast('success', 'Your current location was captured successfully!', 'Location Saved');
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Could not acquire GPS.';
-      showToast('error', msg, 'GPS Acquisition Failed');
+      const msg = err instanceof Error ? err.message : 'Could not detect current location.';
+      showToast('error', 'Could not detect your current location. Please turn on GPS or check your phone settings.', 'Location Error');
     } finally {
       setCapturingGps(false);
     }

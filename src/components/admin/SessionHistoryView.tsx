@@ -106,7 +106,7 @@ export function SessionHistoryView({
     try {
       const records = await getCampaignAttendees(campaign.id);
       if (records.length === 0) {
-        showToast('warning', `No attendee records found for ${campaign.name}.`, 'Empty Session');
+        showToast('warning', `No attendance records found for ${campaign.name}.`, 'No Records');
         return;
       }
 
@@ -118,12 +118,12 @@ export function SessionHistoryView({
 
       showToast(
         'success',
-        `Exported ${result.count} record${result.count === 1 ? '' : 's'} (${result.filename}).`,
-        'History CSV Exported'
+        `Exported ${result.count} attendance record${result.count === 1 ? '' : 's'} to spreadsheet (${result.filename}).`,
+        'Records Exported'
       );
     } catch (err) {
       console.error('Error exporting history session CSV:', err);
-      showToast('error', 'Failed to export session CSV.', 'Export Error');
+      showToast('error', 'Could not export attendance records. Please try again.', 'Export Failed');
     }
   };
 

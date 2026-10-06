@@ -260,11 +260,11 @@ export function AttendanceForm({
           const org = await getOrganization(found.orgId);
           if (org) setOrganization(org);
         }
-        showToast('success', `Joined roll call: ${found.name}`, 'QR Scanned');
+        showToast('success', `Joined session: ${found.name}`, 'Session Joined');
         window.location.hash = `#/c/${found.shortCode}`;
       } else {
         setCampaignError(`No roll call session found matching scanned QR code "${result.code}".`);
-        showToast('error', `Session code "${result.code}" was not found.`, 'QR Not Found');
+        showToast('error', `Session code "${result.code}" was not found. Please try again.`, 'Session Not Found');
       }
     } catch (err) {
       console.error('QR code resolve error:', err);
@@ -295,7 +295,7 @@ export function AttendanceForm({
         window.location.hash = `#/c/${found.shortCode}`;
       } else {
         setCampaignError(`No CDS campaign matches short code "${shortCodeInput}".`);
-        showToast('error', `Short code "${shortCodeInput}" is invalid.`, 'Lookup Failed');
+        showToast('error', `Session code "${shortCodeInput}" is not recognized. Please check and try again.`, 'Code Not Found');
       }
     } catch {
       setCampaignError('Network error while resolving short code.');
@@ -337,7 +337,7 @@ export function AttendanceForm({
 
   const handleFaceCapture = useCallback((result: CompressionResult) => {
     setCapturedPhoto(result);
-    showToast('success', 'Face captured and compressed for submission.', 'Face Verified');
+    showToast('success', 'Your photo has been captured successfully.', 'Photo Ready');
   }, []);
 
   // Submission handler with dual routing (Online vs. Offline .iwh)
@@ -345,7 +345,7 @@ export function AttendanceForm({
     e.preventDefault();
 
     if (!campaign) {
-      showToast('error', 'No active attendance campaign loaded.', 'Error');
+      showToast('error', 'No active attendance session found. Please reload or check your link.', 'Session Missing');
       return;
     }
 
@@ -354,9 +354,9 @@ export function AttendanceForm({
       showToast(
         'error',
         sessionTimer.state === 'upcoming'
-          ? 'Roll call has not unlocked yet. Please wait for the countdown to complete.'
+          ? 'This attendance session has not opened yet. Please wait for the start time.'
           : 'This attendance session has ended and is now closed.',
-        'Session Not Active'
+        'Session Closed'
       );
       return;
     }
@@ -364,14 +364,14 @@ export function AttendanceForm({
     // 1. Name validation
     if (!name.trim() || name.trim().length < 2) {
       setNameError('Full name is required.');
-      showToast('warning', 'Please enter your registered name.', 'Name Required');
+      showToast('warning', 'Please enter your registered full name.', 'Name Needed');
       return;
     }
 
     // 2. State Code validation
     if (!isValidStateCode(stateCode)) {
       setStateCodeError('Invalid format. State Code must follow e.g. LA/23B/1234');
-      showToast('warning', 'Please enter a valid State Code (e.g. LA/23B/1234).', 'Invalid State Code');
+      showToast('warning', 'Please enter a valid State Code (e.g. LA/23B/1234).', 'Check State Code');
       return;
     }
 
@@ -379,8 +379,8 @@ export function AttendanceForm({
     if (!isCoordinatesValid(campaign.targetLatitude, campaign.targetLongitude)) {
       showToast(
         'error',
-        'Intended sign-in area coordinates have not been configured by the coordinator for this session.',
-        'Venue Not Set'
+        'The coordinator has not configured meeting coordinates yet. Please ask your coordinator.',
+        'Meeting Spot Not Set'
       );
       return;
     }
@@ -392,25 +392,25 @@ export function AttendanceForm({
     ) {
       showToast(
         'error',
-        'Live GPS coordinates from your device are required to verify attendance. Please enable location permissions.',
-        'Member Location Required'
+        'We need your current location to confirm attendance. Please allow location access.',
+        'Location Needed'
       );
       return;
     }
 
     if (!isWithinGeofence || currentDistance === null || currentDistance > campaign.allowedRadius) {
-      const distStr = currentDistance !== null ? formatDistance(currentDistance) : 'unknown';
+      const distStr = currentDistance !== null ? formatDistance(currentDistance) : 'a short distance';
       showToast(
         'error',
-        `You are ${distStr} away from the venue. Please move within ${campaign.allowedRadius}m to submit.`,
-        'Geofence Violation'
+        `You are currently ${distStr} away from the meeting place. Please walk closer (within ${campaign.allowedRadius}m) to sign attendance.`,
+        'Location Check'
       );
       return;
     }
 
     // 4. Facial verification check
     if (!capturedPhoto) {
-      showToast('warning', 'Please align your face and capture verification photo.', 'Photo Required');
+      showToast('warning', 'Please take your photo before submitting attendance.', 'Photo Needed');
       return;
     }
 
@@ -495,13 +495,13 @@ export function AttendanceForm({
         setCompletedAttendee(syntheticAttendee);
         showToast(
           'success',
-          'Stored in offline IndexedDB! Attendance will automatically sync to Firebase once reconnected.',
-          'Offline Record Queued'
+          'Attendance saved on this device. It will automatically sync once you are back online.',
+          'Saved Offline'
         );
       } catch (cryptoErr) {
         console.error('Offline storage/encryption error:', cryptoErr);
         setCompletedAttendee(null);
-        showToast('error', 'Failed to save offline record to IndexedDB. Please retry submission.', 'Offline Error');
+        showToast('error', 'Could not save attendance to this device. Please try again.', 'Save Failed');
       } finally {
         setIsSubmitting(false);
       }
@@ -521,8 +521,8 @@ export function AttendanceForm({
       if (isAlreadyRegistered) {
         showToast(
           'error',
-          `State Code ${stateCode} has already registered attendance for this session today!`,
-          'Duplicate Entry Blocked'
+          `State Code ${stateCode} has already signed attendance for this session today!`,
+          'Already Signed'
         );
         setIsSubmitting(false);
         return;
@@ -579,7 +579,7 @@ export function AttendanceForm({
       // Strictly trigger success UI only AFTER confirmed write
       setIsOfflinePackage(false);
       setCompletedAttendee(newAttendee);
-      showToast('success', 'Attendance & biometrics saved to cloud & .iwh downloaded!', 'Verified');
+      showToast('success', 'Attendance submitted successfully! A backup receipt has been downloaded.', 'Attendance Signed');
     } catch (err) {
       console.warn('Online submission failed, falling back to IndexedDB local serialization:', err);
       // Seamless auto-fallback to IndexedDB serialization and encrypted .iwh backup
@@ -641,13 +641,13 @@ export function AttendanceForm({
         setCompletedAttendee(syntheticAttendee);
         showToast(
           'info',
-          'Cloud connection interrupted: Queued in IndexedDB and downloaded .iwh backup.',
-          'Offline Queued'
+          'Internet connection was slow. Attendance saved on this device and backup receipt downloaded.',
+          'Saved Offline'
         );
       } catch (fallbackErr) {
         console.error('Both Firestore and IndexedDB writes failed:', fallbackErr);
         setCompletedAttendee(null);
-        showToast('error', 'Submission failed. Please check device connectivity and storage permissions.', 'Error');
+        showToast('error', 'Could not submit your attendance. Please check your internet connection and try again.', 'Submission Failed');
       }
     } finally {
       setIsSubmitting(false);
@@ -656,15 +656,15 @@ export function AttendanceForm({
 
   const handleDownloadIwhOnly = async () => {
     if (!name.trim()) {
-      showToast('warning', 'Please enter your full name first.', 'Name Required');
+      showToast('warning', 'Please enter your registered full name first.', 'Name Needed');
       return;
     }
     if (!isValidStateCode(stateCode)) {
-      showToast('warning', 'Please enter a valid NYSC State Code (e.g. LA/24A/1234).', 'State Code Required');
+      showToast('warning', 'Please enter a valid State Code (e.g. LA/24A/1234).', 'State Code Needed');
       return;
     }
     if (!capturedPhoto) {
-      showToast('warning', 'Please capture your face verification photo before downloading.', 'Photo Required');
+      showToast('warning', 'Please take your photo before downloading.', 'Photo Needed');
       return;
     }
     if (
@@ -674,8 +674,8 @@ export function AttendanceForm({
     ) {
       showToast(
         'error',
-        'Live device GPS coordinates from member are required to generate an authentic offline clearance file.',
-        'GPS Location Required'
+        'We need your current location to generate your offline attendance file.',
+        'Location Needed'
       );
       return;
     }
@@ -703,10 +703,10 @@ export function AttendanceForm({
 
       const encrypted = await encryptOfflineRecord(offlineRecord);
       const downloadedName = downloadIwhFile(encrypted);
-      showToast('success', `Encrypted attendance file ${downloadedName} downloaded!`, 'Downloaded .iwh');
+      showToast('success', `Your attendance backup file (${downloadedName}) has been downloaded!`, 'Receipt Saved');
     } catch (err) {
       console.error('Download error:', err);
-      showToast('error', 'Failed to generate .iwh file. Please retry.', 'Error');
+      showToast('error', 'Could not create the backup file. Please try again.', 'Download Failed');
     }
   };
 
@@ -741,10 +741,10 @@ export function AttendanceForm({
       };
       const encrypted = await encryptOfflineRecord(offlineRecord);
       const downloadedName = downloadIwhFile(encrypted);
-      showToast('success', `Encrypted attendance file ${downloadedName} downloaded!`, 'Downloaded .iwh');
+      showToast('success', `Your attendance backup file (${downloadedName}) has been downloaded!`, 'Receipt Saved');
     } catch (err) {
       console.error('Re-download error:', err);
-      showToast('error', 'Failed to generate .iwh file.', 'Error');
+      showToast('error', 'Could not create the backup file.', 'Download Failed');
     }
   };
 

@@ -60,7 +60,7 @@ export function CampaignQRCard({
   const handleCopyLink = () => {
     navigator.clipboard.writeText(attendanceUrl);
     setCopied(true);
-    showToast('info', `Copied short link: ${attendanceUrl}`, 'Link Copied');
+    showToast('info', 'Attendance link copied to clipboard!', 'Link Copied');
     setTimeout(() => setCopied(false), 2500);
   };
 
@@ -70,7 +70,7 @@ export function CampaignQRCard({
     a.href = qrDataUrl;
     a.download = `RollCall_QR_${campaign.shortCode.toUpperCase()}_${campaign.date}.png`;
     a.click();
-    showToast('success', 'QR code saved to downloads.', 'Downloaded');
+    showToast('success', 'QR code image saved to downloads.', 'Downloaded');
   };
 
   return (

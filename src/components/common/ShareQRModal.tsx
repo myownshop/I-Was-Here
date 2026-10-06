@@ -45,7 +45,7 @@ export function ShareQRModal({
       showToast('success', 'Link copied to clipboard!', 'Copied');
       setTimeout(() => setCopied(false), 2500);
     } catch {
-      showToast('error', 'Could not copy link.', 'Error');
+      showToast('error', 'Could not copy link. Please try selecting the text manually.', 'Copy Error');
     }
   };
 
@@ -80,7 +80,7 @@ export function ShareQRModal({
         });
       } catch (err: unknown) {
         if ((err as Error)?.name !== 'AbortError') {
-          showToast('info', 'Share cancelled or not completed.');
+          showToast('info', 'Sharing was cancelled.');
         }
       }
     } else {
@@ -110,13 +110,13 @@ export function ShareQRModal({
     a.href = qrDataUrl;
     a.download = `Attendance_QR_${shortCode || 'RollCall'}.png`;
     a.click();
-    showToast('success', 'QR code image downloaded.', 'Downloaded');
+    showToast('success', 'QR code image saved to downloads.', 'Downloaded');
   };
 
   const handlePrint = () => {
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
-      showToast('warning', 'Please allow popups to print poster.');
+      showToast('warning', 'Please allow popups in your browser to print the poster.');
       return;
     }
 
