@@ -14,6 +14,7 @@ import {
   parseGoogleMapsUrlOrCoordinatesAsync,
   getCurrentCoordinates,
   ParsedVenueLocation,
+  GpsError,
 } from '../../utils/geo';
 import { showToast } from './Toast';
 
@@ -45,6 +46,7 @@ export function GoogleMapsLinkInput({
   const [isResolving, setIsResolving] = useState<boolean>(false);
   const [hasCopiedFeedback, setHasCopiedFeedback] = useState<boolean>(false);
   const [capturingGps, setCapturingGps] = useState<boolean>(false);
+  const [gpsAttempt, setGpsAttempt] = useState<number>(1);
 
   const handleApply = async (urlToParse = inputUrl) => {
     const trimmed = urlToParse.trim();
@@ -106,29 +108,75 @@ export function GoogleMapsLinkInput({
 
   const handleUseDeviceGps = async () => {
     setCapturingGps(true);
-    try {
-      const coords = await getCurrentCoordinates();
-      const lat = coords.latitude;
-      const lng = coords.longitude;
-      setInputUrl(`${lat}, ${lng}`);
-      onCoordinatesParsed({
-        latitude: lat,
-        longitude: lng,
-      });
-      setParseResult({
-        success: true,
-        latitude: lat,
-        longitude: lng,
-        sourceType: 'coordinates',
-        originalInput: `${lat}, ${lng}`,
-      });
-      showToast('success', 'Your current location was captured successfully!', 'Location Saved');
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Could not detect current location.';
-      showToast('error', 'Could not detect your current location. Please turn on GPS or check your phone settings.', 'Location Error');
-    } finally {
-      setCapturingGps(false);
+    const MAX_ATTEMPTS = 3;
+    let lastError: unknown = null;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const coords = await getCurrentCoordinates({
+          enableHighAccuracy: attempt === 1,
+          timeout: attempt === 1 ? 5000 : 4000,
+          allowCachedFallback: true,
+        });
+        const lat = Number(coords.latitude.toFixed(6));
+        const lng = Number(coords.longitude.toFixed(6));
+        setInputUrl(`${lat}, ${lng}`);
+        onCoordinatesParsed({
+          latitude: lat,
+          longitude: lng,
+        });
+        setParseResult({
+          success: true,
+          latitude: lat,
+          longitude: lng,
+          sourceType: 'device_gps',
+          originalInput: `${lat}, ${lng}`,
+        });
+        showToast('success', 'GPS location captured successfully!');
+        setCapturingGps(false);
+        return;
+      } catch (err: unknown) {
+        lastError = err;
+
+        const isPermissionDenied =
+          (err instanceof GpsError && err.code === 'PERMISSION_DENIED') ||
+          (err instanceof Error && err.message.toLowerCase().includes('permission'));
+
+        if (isPermissionDenied) {
+          const deniedMsg = 'Location permission denied. Please allow access in browser.';
+          setParseResult({
+            success: false,
+            error: deniedMsg,
+            originalInput: 'Device GPS',
+          });
+          showToast('error', deniedMsg, 'Permission Needed');
+          setCapturingGps(false);
+          return;
+        }
+
+        if (attempt < MAX_ATTEMPTS) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
     }
+
+    // All 3 attempts failed
+    let failMsg = 'Could not detect your location. Please check your GPS settings.';
+    if (lastError instanceof GpsError && lastError.code === 'POSITION_UNAVAILABLE') {
+      failMsg = 'Device location is turned off. Please enable location in settings.';
+    } else if (lastError instanceof GpsError && lastError.code === 'TIMEOUT') {
+      failMsg = 'Location signal timed out. Please tap Try Again.';
+    } else if (lastError instanceof Error && lastError.message) {
+      failMsg = lastError.message;
+    }
+
+    setParseResult({
+      success: false,
+      error: failMsg,
+      originalInput: 'Device GPS',
+    });
+    showToast('error', failMsg, 'Location Error');
+    setCapturingGps(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -258,35 +306,56 @@ export function GoogleMapsLinkInput({
           }`}
         >
           {parseResult.success ? (
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between font-bold text-emerald-400">
-                <span className="flex items-center gap-1.5">
-                  <Check className="w-4 h-4 text-[#00FF66]" />
-                  <span>Venue GPS Coordinates Acquired</span>
-                </span>
-                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-emerald-900/60 border border-emerald-500/30 text-emerald-300">
-                  {parseResult.sourceType?.replace(/_/g, ' ') || 'Resolved'}
-                </span>
+            parseResult.sourceType === 'device_gps' ? (
+              <div className="flex items-center gap-1.5 font-bold text-emerald-400">
+                <Check className="w-4 h-4 text-[#00FF66] shrink-0" />
+                <span>GPS location captured successfully!</span>
               </div>
-              <div className="text-[11px] font-mono text-emerald-100 flex items-center gap-2">
-                <span>Latitude: <strong>{parseResult.latitude}</strong></span>
-                <span>•</span>
-                <span>Longitude: <strong>{parseResult.longitude}</strong></span>
-              </div>
-              {parseResult.venueName && (
-                <div className="text-[11px] text-slate-300 pt-0.5">
-                  Venue Name: <strong className="text-white">{parseResult.venueName}</strong>
+            ) : (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between font-bold text-emerald-400">
+                  <span className="flex items-center gap-1.5">
+                    <Check className="w-4 h-4 text-[#00FF66]" />
+                    <span>Venue GPS Coordinates Acquired</span>
+                  </span>
+                  <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-emerald-900/60 border border-emerald-500/30 text-emerald-300">
+                    {parseResult.sourceType?.replace(/_/g, ' ') || 'Resolved'}
+                  </span>
                 </div>
-              )}
-            </div>
+                <div className="text-[11px] font-mono text-emerald-100 flex items-center gap-2">
+                  <span>Latitude: <strong>{parseResult.latitude}</strong></span>
+                  <span>•</span>
+                  <span>Longitude: <strong>{parseResult.longitude}</strong></span>
+                </div>
+                {parseResult.venueName && (
+                  <div className="text-[11px] text-slate-300 pt-0.5">
+                    Venue Name: <strong className="text-white">{parseResult.venueName}</strong>
+                  </div>
+                )}
+              </div>
+            )
           ) : (
             <div className="flex items-start gap-2">
               <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-              <div className="text-[11px] leading-relaxed">
+              <div className="text-[11px] leading-relaxed flex-1">
                 <span>{parseResult.error}</span>
-                <p className="mt-1 text-slate-300">
-                  💡 <em>Supported links:</em> Short share links (<code>maps.app.goo.gl/...</code>, <code>goo.gl/maps/...</code>), full browser links (<code>maps.google.com/.../@lat,lng</code>), or raw coordinates (<code>6.5954, 3.3421</code>).
-                </p>
+                {parseResult.originalInput === 'Device GPS' ? (
+                  <div className="mt-2 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleUseDeviceGps}
+                      disabled={capturingGps}
+                      className="px-2.5 py-1 rounded-lg bg-rose-500 hover:bg-rose-600 text-white font-medium text-[10px] flex items-center gap-1 cursor-pointer transition-colors shadow disabled:opacity-50"
+                    >
+                      <Navigation className="w-3 h-3" />
+                      <span>Try Again</span>
+                    </button>
+                  </div>
+                ) : (
+                  <p className="mt-1 text-slate-300">
+                    💡 <em>Supported links:</em> Short share links (<code>maps.app.goo.gl/...</code>, <code>goo.gl/maps/...</code>), full browser links (<code>maps.google.com/.../@lat,lng</code>), or raw coordinates (<code>6.5954, 3.3421</code>).
+                  </p>
+                )}
               </div>
             </div>
           )}

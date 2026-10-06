@@ -241,20 +241,44 @@ export async function getCurrentCoordinates(
     allowCachedFallback = true,
   } = options;
 
-  // Helper promise for browser getCurrentPosition
+  // Helper promise for browser getCurrentPosition with hard timeout protection
   const requestPosition = (opts: PositionOptions): Promise<GeoLocationCoordinates> => {
     return new Promise((resolve, reject) => {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          resolve({
-            latitude: Number(position.coords.latitude.toFixed(6)),
-            longitude: Number(position.coords.longitude.toFixed(6)),
-            accuracy: Math.round(position.coords.accuracy || 10),
-          });
-        },
-        (error) => reject(error),
-        opts
-      );
+      let isSettled = false;
+      const timeoutMs = opts.timeout || 6000;
+      const timer = setTimeout(() => {
+        if (!isSettled) {
+          isSettled = true;
+          reject({ code: 3, message: 'Geolocation timeout' });
+        }
+      }, timeoutMs + 500);
+
+      try {
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            if (isSettled) return;
+            isSettled = true;
+            clearTimeout(timer);
+            resolve({
+              latitude: Number(position.coords.latitude.toFixed(6)),
+              longitude: Number(position.coords.longitude.toFixed(6)),
+              accuracy: Math.round(position.coords.accuracy || 10),
+            });
+          },
+          (error) => {
+            if (isSettled) return;
+            isSettled = true;
+            clearTimeout(timer);
+            reject(error);
+          },
+          opts
+        );
+      } catch (err) {
+        if (isSettled) return;
+        isSettled = true;
+        clearTimeout(timer);
+        reject(err);
+      }
     });
   };
 
@@ -265,7 +289,7 @@ export async function getCurrentCoordinates(
     try {
       const highAccResult = await requestPosition({
         enableHighAccuracy: true,
-        timeout: Math.min(timeout, 9000),
+        timeout: Math.min(timeout, 5000),
         maximumAge,
       });
       saveLastKnownCoordinates(highAccResult);
@@ -275,7 +299,7 @@ export async function getCurrentCoordinates(
         const pErr = err as GeolocationPositionError;
         if (pErr.code === 1) {
           throw new GpsError(
-            'Location permission was denied. Please allow location access in your browser settings so your actual attendance location can be verified.',
+            'Location permission denied. Please allow location access in your browser.',
             'PERMISSION_DENIED'
           );
         }
@@ -290,8 +314,8 @@ export async function getCurrentCoordinates(
   try {
     const standardResult = await requestPosition({
       enableHighAccuracy: false,
-      timeout: 7000,
-      maximumAge: 15000,
+      timeout: 4500,
+      maximumAge: 30000,
     });
     saveLastKnownCoordinates(standardResult);
     return standardResult;
@@ -300,7 +324,7 @@ export async function getCurrentCoordinates(
       const pErr = err as GeolocationPositionError;
       if (pErr.code === 1) {
         throw new GpsError(
-          'Location permission was denied. Please allow location access in your browser settings so your actual attendance location can be verified.',
+          'Location permission denied. Please allow location access in your browser.',
           'PERMISSION_DENIED'
         );
       }
@@ -319,20 +343,20 @@ export async function getCurrentCoordinates(
 
   if (lastErrCode === 'POSITION_UNAVAILABLE') {
     throw new GpsError(
-      'Device GPS/Location services are currently turned off on your phone. Please toggle Location ON in your phone settings or quick controls.',
+      'Device location is turned off. Please enable location in your device settings.',
       'POSITION_UNAVAILABLE'
     );
   }
 
   if (lastErrCode === 'TIMEOUT') {
     throw new GpsError(
-      'Satellite signal timeout. Move closer to a window or outdoors, and tap to retry GPS acquisition.',
+      'Location signal timed out. Please check your signal and try again.',
       'TIMEOUT'
     );
   }
 
   throw new GpsError(
-    'Unable to acquire device GPS coordinates. Please ensure Location is enabled in your phone/device settings and tap Refresh.',
+    'Could not detect location. Please check your device location settings.',
     lastErrCode
   );
 }
@@ -501,7 +525,7 @@ export interface ParsedVenueLocation {
   latitude?: number;
   longitude?: number;
   venueName?: string;
-  sourceType?: 'google_maps_url' | 'coordinates' | 'dms' | 'data_param' | 'short_url';
+  sourceType?: 'google_maps_url' | 'coordinates' | 'dms' | 'data_param' | 'short_url' | 'device_gps';
   error?: string;
   originalInput: string;
 }

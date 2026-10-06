@@ -14,12 +14,14 @@ import {
   Lock,
   RotateCcw,
   AlertTriangle,
+  Radio,
+  RefreshCw,
 } from 'lucide-react';
 import { Campaign, Organization, TimeBlock } from '../../types/attendance';
 import { FloatingInput } from '../common/FloatingInput';
 import { GoogleMapsLinkInput } from '../common/GoogleMapsLinkInput';
 import { generateShortCode } from '../../utils/nysc';
-import { getCurrentCoordinates } from '../../utils/geo';
+import { getCurrentCoordinates, GpsError } from '../../utils/geo';
 import { updateCampaign, deleteCampaign } from '../../services/firebase';
 import { showToast } from '../common/Toast';
 import { toDateTimeLocalInputString } from '../../utils/dateUtils';
@@ -53,10 +55,12 @@ export function EditCampaignModal({
   const [endTime, setEndTime] = useState<string>('');
 
   const [locating, setLocating] = useState<boolean>(false);
+  const [gpsAttempt, setGpsAttempt] = useState<number>(1);
   const [saving, setSaving] = useState<boolean>(false);
   const [isConfirmingDelete, setIsConfirmingDelete] = useState<boolean>(false);
   const [deleting, setDeleting] = useState<boolean>(false);
   const [gpsSuccessMessage, setGpsSuccessMessage] = useState<string | null>(null);
+  const [gpsErrorMessage, setGpsErrorMessage] = useState<string | null>(null);
 
   // Populate form with current campaign data whenever opened
   useEffect(() => {
@@ -115,26 +119,64 @@ export function EditCampaignModal({
     );
   };
 
+  // Use Current GPS coordinates with backend retries (up to 3 attempts)
   const handleUseCurrentLocation = async () => {
     setLocating(true);
     setGpsSuccessMessage(null);
-    try {
-      const coords = await getCurrentCoordinates({ enableHighAccuracy: true });
-      setTargetLat(coords.latitude.toFixed(6));
-      setTargetLng(coords.longitude.toFixed(6));
-      setGpsSuccessMessage(
-        `Current GPS location captured successfully! Coordinates: ${coords.latitude.toFixed(5)}, ${coords.longitude.toFixed(5)} (±${Math.round(coords.accuracy)}m accuracy).`
-      );
-      showToast(
-        'success',
-        'Your current location was captured successfully!',
-        'Location Saved'
-      );
-    } catch {
-      showToast('error', 'Could not detect your current location. Please turn on GPS and try again.', 'Location Error');
-    } finally {
-      setLocating(false);
+    setGpsErrorMessage(null);
+
+    const MAX_ATTEMPTS = 3;
+    let lastError: unknown = null;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const coords = await getCurrentCoordinates({
+          enableHighAccuracy: attempt === 1,
+          timeout: attempt === 1 ? 5000 : 4000,
+          allowCachedFallback: true,
+        });
+
+        // SUCCESS!
+        setTargetLat(coords.latitude.toFixed(6));
+        setTargetLng(coords.longitude.toFixed(6));
+        setGpsErrorMessage(null);
+        setGpsSuccessMessage('GPS location captured successfully!');
+        showToast('success', 'GPS location captured successfully!');
+        setLocating(false);
+        return;
+      } catch (err: unknown) {
+        lastError = err;
+
+        const isPermissionDenied =
+          (err instanceof GpsError && err.code === 'PERMISSION_DENIED') ||
+          (err instanceof Error && err.message.toLowerCase().includes('permission'));
+
+        if (isPermissionDenied) {
+          setGpsErrorMessage('Location permission denied. Please allow access in browser.');
+          showToast('error', 'Location permission denied. Please allow access in browser.', 'Permission Needed');
+          setLocating(false);
+          return;
+        }
+
+        if (attempt < MAX_ATTEMPTS) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
     }
+
+    // All 3 attempts failed
+    let failMsg = 'Could not detect your location. Please check your GPS settings.';
+    if (lastError instanceof GpsError && lastError.code === 'POSITION_UNAVAILABLE') {
+      failMsg = 'Device location is turned off. Please enable location.';
+    } else if (lastError instanceof GpsError && lastError.code === 'TIMEOUT') {
+      failMsg = 'Location signal timed out. Please tap Try Again.';
+    } else if (lastError instanceof Error && lastError.message) {
+      failMsg = lastError.message;
+    }
+
+    setGpsErrorMessage(failMsg);
+    showToast('error', failMsg, 'Location Error');
+    setLocating(false);
   };
 
   const handleGoogleMapsParsed = (coords: { latitude: number; longitude: number; venueName?: string }) => {
@@ -417,25 +459,50 @@ export function EditCampaignModal({
                 type="button"
                 onClick={handleUseCurrentLocation}
                 disabled={locating}
-                className="px-2.5 py-1 rounded-lg bg-[#00FF66]/10 hover:bg-[#00FF66]/20 border border-[#00FF66]/30 text-[#00FF66] text-xs font-bold flex items-center gap-1 transition-all cursor-pointer disabled:opacity-50"
+                className="px-2.5 py-1 rounded-lg bg-[#00FF66]/10 hover:bg-[#00FF66]/20 border border-[#00FF66]/30 text-[#00FF66] text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
               >
-                {locating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Navigation className="w-3 h-3" />}
-                <span>{locating ? 'Acquiring...' : 'Use My GPS'}</span>
+                {locating ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Locating...</span>
+                  </>
+                ) : (
+                  <>
+                    <Navigation className="w-3.5 h-3.5" />
+                    <span>Use My GPS</span>
+                  </>
+                )}
               </button>
             </div>
 
+            {/* Success message (single line) */}
             {gpsSuccessMessage && (
-              <div className="p-3.5 rounded-2xl bg-[#00FF66]/10 border border-[#00FF66]/35 text-[#00FF66] text-xs space-y-1.5 animate-in fade-in duration-200">
-                <div className="flex items-center space-x-2 font-bold">
-                  <CheckCircle2 className="w-4 h-4 shrink-0 text-[#00FF66]" />
-                  <span>GPS Location Successfully Captured!</span>
+              <div
+                id="edit-gps-success-banner"
+                className="p-2.5 rounded-xl bg-[#00FF66]/10 border border-[#00FF66]/25 text-[#00FF66] text-xs flex items-center gap-2"
+              >
+                <CheckCircle2 className="w-4 h-4 shrink-0 text-[#00FF66]" />
+                <span className="font-medium truncate">{gpsSuccessMessage}</span>
+              </div>
+            )}
+
+            {/* Failure message (single line with Try Again) */}
+            {gpsErrorMessage && (
+              <div
+                id="edit-gps-failure-banner"
+                className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/25 text-rose-300 text-xs flex items-center justify-between gap-2"
+              >
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
+                  <span className="font-medium truncate">{gpsErrorMessage}</span>
                 </div>
-                <p className="text-[11px] text-emerald-200 pl-6 leading-relaxed">
-                  {gpsSuccessMessage}
-                </p>
-                <p className="text-[10px] text-slate-400 pl-6">
-                  Members will verify that they are physically at this location when signing attendance.
-                </p>
+                <button
+                  type="button"
+                  onClick={handleUseCurrentLocation}
+                  className="px-2.5 py-1 rounded-lg bg-rose-500 hover:bg-rose-600 text-white font-medium text-[11px] shrink-0 cursor-pointer transition-colors"
+                >
+                  Try Again
+                </button>
               </div>
             )}
 
